@@ -1,12 +1,31 @@
 :root {
   --font-size: 26px;
   --bg-alpha: 0.72;
+  --bg-rgb: 14, 16, 22;
   --accent: #5ac8fa;
+  --accent-text: var(--accent);
   --text: #ffffff;
   --muted: rgba(255, 255, 255, 0.62);
   --spanish: #ffd60a;
-  --spanish-muted: rgba(255, 214, 10, 0.72);
+  --english: #5ac8fa;
   --border: rgba(255, 255, 255, 0.14);
+  --surface: rgba(255, 255, 255, 0.1);
+  --surface-hover: rgba(255, 255, 255, 0.18);
+  --panel: rgb(20, 22, 30);
+  --caption-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+body.light-bg {
+  --accent-text: #0a6c94;
+  --text: #16181d;
+  --muted: rgba(0, 0, 0, 0.58);
+  --spanish: #8a5a00;
+  --english: #0a6c94;
+  --border: rgba(0, 0, 0, 0.14);
+  --surface: rgba(0, 0, 0, 0.07);
+  --surface-hover: rgba(0, 0, 0, 0.14);
+  --panel: rgb(246, 246, 248);
+  --caption-shadow: none;
 }
 
 * {
@@ -19,7 +38,7 @@ body {
   height: 100%;
   background: transparent;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', sans-serif;
   color: var(--text);
   user-select: none;
 }
@@ -30,7 +49,7 @@ body {
   display: flex;
   flex-direction: column;
   border-radius: 18px;
-  background: rgba(14, 16, 22, var(--bg-alpha));
+  background: rgba(var(--bg-rgb), var(--bg-alpha));
   border: 1px solid var(--border);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   overflow: hidden;
@@ -50,12 +69,64 @@ input,
 
 .toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 6px;
   order: -1;
   padding: 8px 12px;
   font-size: 12px;
+}
+
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.appearance {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  -webkit-app-region: no-drag;
+}
+
+.appearance label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.appearance input[type='color'] {
+  width: 26px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}
+
+.appearance input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.appearance input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.appearance input[type='range'] {
+  width: 110px;
+}
+
+.appearance output {
+  min-width: 34px;
+  font-variant-numeric: tabular-nums;
+}
+
+.overlay.collapsed .appearance-row {
+  display: none;
 }
 
 .status {
@@ -76,7 +147,7 @@ input,
   font-variant-numeric: tabular-nums;
   padding: 2px 8px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface);
   color: var(--text);
 }
 
@@ -137,7 +208,7 @@ input {
 
 button,
 select {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 4px 10px;
@@ -157,7 +228,7 @@ select {
 
 button:hover,
 select:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--surface-hover);
 }
 
 button.primary {
@@ -222,12 +293,12 @@ select option {
   max-width: 78%;
   padding: 8px 14px 10px;
   border-radius: 16px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  text-shadow: var(--caption-shadow);
 }
 
 .cap:not([data-lang='es']) {
   align-self: flex-start;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface);
   border-bottom-left-radius: 4px;
 }
 
@@ -253,7 +324,7 @@ select option {
 
 .cap .src {
   font-size: calc(var(--font-size) * 0.7);
-  color: var(--muted);
+  color: var(--text);
   line-height: 1.3;
 }
 
@@ -293,12 +364,8 @@ select option {
   border-radius: 4px;
   vertical-align: 2px;
   background: rgba(90, 200, 250, 0.22);
-  color: var(--accent);
+  color: var(--accent-text);
   font-style: normal;
-}
-
-.cap[data-lang='es'] .src .text {
-  color: var(--spanish-muted);
 }
 
 .cap[data-lang='es'] .lang {
@@ -306,9 +373,12 @@ select option {
   color: var(--spanish);
 }
 
-.cap:not([data-lang='es']) .tr,
-body.no-translation .cap[data-lang='es'] .src .text {
+.cap:not([data-lang='es']) .tr {
   color: var(--spanish);
+}
+
+.cap[data-lang='es'] .tr {
+  color: var(--english);
 }
 
 body.hide-original .cap .src {
@@ -334,10 +404,10 @@ body.no-translation .cap .src {
 
 .settings {
   position: absolute;
-  inset: 40px 12px 12px;
+  inset: 76px 12px 12px;
   z-index: 10;
   padding: 14px 16px;
-  background: rgb(20, 22, 30);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow-y: auto;
@@ -366,7 +436,7 @@ body.no-translation .cap .src {
 .settings input[type='password'],
 .settings input[type='email'],
 .settings select {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;

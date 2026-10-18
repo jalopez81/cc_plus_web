@@ -6,45 +6,60 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src wss://api.deepgram.com; media-src 'self' blob: mediastream:"
     />
-    <title>Mac Live Captioner</title>
+    <title>Live Captioner</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="overlay" id="overlay">
       <main class="captions" id="captions">
         <p class="placeholder" id="placeholder">
-          Press <strong>Start</strong> to caption whatever your Mac is playing.
+          Press <strong>Start</strong> to caption whatever your computer is playing.
         </p>
       </main>
 
       <header class="toolbar">
-        <div class="status">
-          <span class="hold-timer" id="holdTimer" title="Hold time: resets on every new message">15:00</span>
-          <span class="dot" id="statusDot"></span>
-          <span id="statusText">Idle</span>
+        <div class="toolbar-row">
+          <div class="status">
+            <span class="hold-timer" id="holdTimer" title="Hold time: resets on every new message">15:00</span>
+            <span class="dot" id="statusDot"></span>
+            <span id="statusText">Idle</span>
+          </div>
+          <div class="controls">
+            <select id="sourceMode" title="Source language">
+              <option value="auto">Auto EN ⇄ ES</option>
+              <option value="en">English → Español</option>
+              <option value="es">Español → English</option>
+            </select>
+            <select id="translatorSelect" title="Translation service">
+              <option value="auto">Auto</option>
+              <option value="deepl">DeepL</option>
+              <option value="google">Google</option>
+              <option value="mymemory">MyMemory</option>
+              <option value="apertium">Apertium</option>
+              <option value="off">No translation</option>
+            </select>
+            <button id="toggleBtn" class="primary" title="Capture system audio">Start</button>
+            <button id="clearBtn" title="Clear captions">Clear</button>
+            <button id="fontDownBtn" title="Smaller text">A−</button>
+            <button id="fontUpBtn" title="Larger text">A+</button>
+            <button id="clickThroughBtn">Pin</button>
+            <button id="settingsBtn" title="Settings">⚙</button>
+            <button id="collapseBtn" title="Collapse">▼</button>
+            <button id="closeBtn" title="Quit">✕</button>
+          </div>
         </div>
-        <div class="controls">
-          <select id="sourceMode" title="Source language">
-            <option value="auto">Auto EN ⇄ ES</option>
-            <option value="en">English → Español</option>
-            <option value="es">Español → English</option>
-          </select>
-          <select id="translatorSelect" title="Translation service">
-            <option value="auto">Auto</option>
-            <option value="deepl">DeepL</option>
-            <option value="google">Google</option>
-            <option value="mymemory">MyMemory</option>
-            <option value="apertium">Apertium</option>
-            <option value="off">No translation</option>
-          </select>
-          <button id="toggleBtn" class="primary" title="Capture system audio">Start</button>
-          <button id="clearBtn" title="Clear captions">Clear</button>
-          <button id="fontDownBtn" title="Smaller text">A−</button>
-          <button id="fontUpBtn" title="Larger text">A+</button>
-          <button id="clickThroughBtn" title="Click-through (⌘⇧L)">Pin</button>
-          <button id="settingsBtn" title="Settings">⚙</button>
-          <button id="collapseBtn" title="Collapse">▼</button>
-          <button id="closeBtn" title="Quit">✕</button>
+        <div class="toolbar-row appearance-row">
+          <div class="appearance">
+            <label title="Background color">
+              Background
+              <input type="color" id="bgColorInput" />
+            </label>
+            <label title="Background opacity (0% is fully transparent)">
+              Opacity
+              <input type="range" id="bgOpacityInput" min="0" max="1" step="0.02" />
+              <output id="bgOpacityValue"></output>
+            </label>
+          </div>
         </div>
       </header>
 
@@ -79,8 +94,12 @@
               <input type="range" name="fontSize" min="16" max="48" step="1" />
             </label>
             <label>
-              Background
+              Background opacity
               <input type="range" name="bgOpacity" min="0" max="1" step="0.02" />
+            </label>
+            <label>
+              Background color
+              <input type="color" name="bgColor" />
             </label>
           </div>
           <label class="checkbox">

@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS = {
   myMemoryEmail: '',
   fontSize: 26,
   bgOpacity: 0.72,
+  bgColor: '#0e1016',
   showOriginal: true,
 };
 
@@ -34,6 +35,14 @@ let expandedHeight = null;
 let captureMode = 'window'; // 'window' grants our own window as the video track; 'screen' falls back to a display.
 
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
+const LEGACY_APP_NAME = 'Mac Live Captioner';
+
+function migrateLegacySettings() {
+  const legacy = path.join(app.getPath('appData'), LEGACY_APP_NAME, 'settings.json');
+  if (fs.existsSync(settingsPath()) || !fs.existsSync(legacy)) return;
+  fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
+  fs.copyFileSync(legacy, settingsPath());
+}
 
 function loadSettings() {
   let stored = {};
@@ -45,7 +54,7 @@ function loadSettings() {
       try {
         stored[key] = safeStorage.decryptString(Buffer.from(stored[key], 'base64'));
       } catch {
-        stored[key] = '';
+        delete stored[key];
       }
     }
     delete stored[`${key}Encrypted`];
@@ -159,6 +168,7 @@ function registerIpc() {
 }
 
 app.whenReady().then(() => {
+  migrateLegacySettings();
   // getDisplayMedia arrives as 'media' with no mediaTypes; mic/camera requests list them. Only allow the former.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => {
     cb(permission === 'media' && (details.mediaTypes ?? []).length === 0);

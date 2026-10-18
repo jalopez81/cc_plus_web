@@ -1,15 +1,14 @@
 module.exports = {
   packagerConfig: {
-    name: 'Mac Live Captioner',
-    appBundleId: 'com.maclivecaptioner.app',
+    name: 'Live Captioner',
+    appBundleId: 'com.livecaptioner.app',
     asar: true,
     extendInfo: {
-      NSAudioCaptureUsageDescription:
-        'Mac Live Captioner listens to system audio to generate live captions.',
+      NSAudioCaptureUsageDescription: 'Live Captioner listens to system audio to generate live captions.',
     },
   },
   makers: [
-    { name: '@electron-forge/maker-zip', platforms: ['darwin'] },
+    { name: '@electron-forge/maker-zip', platforms: ['darwin', 'win32'] },
     { name: '@electron-forge/maker-dmg', config: { format: 'ULFO' } },
   ],
 };

@@ -8,6 +8,7 @@ const FONT_MIN = 16;
 const FONT_MAX = 48;
 const SPEAKER_LABELS = { en: 'Cliente · EN', es: 'LEP · ES' };
 const SPEAKER_FLAGS = { en: '🇬🇧', es: '🇪🇸' };
+const SHORTCUT_MODIFIERS = /Mac/i.test(navigator.platform) ? '⌘⇧' : 'Ctrl+Shift+';
 
 const $ = (id) => document.getElementById(id);
 const overlay = $('overlay');
@@ -34,12 +35,35 @@ function setStatus(state, text) {
   statusText.title = text;
 }
 
+const bgColorInput = $('bgColorInput');
+const bgOpacityInput = $('bgOpacityInput');
+const bgOpacityValue = $('bgOpacityValue');
+
+const hexToRgb = (hex) => hex.match(/[0-9a-f]{2}/gi).map((h) => parseInt(h, 16));
+
+// Below this opacity the desktop behind the window dominates, so keep light text with a shadow.
+const LIGHT_TEXT_MAX_OPACITY = 0.4;
+
+function isLightBackground(rgb, opacity) {
+  const [r, g, b] = rgb.map((c) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return opacity >= LIGHT_TEXT_MAX_OPACITY && 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4;
+}
+
 function applyAppearance() {
   const root = document.documentElement.style;
+  const rgb = hexToRgb(settings.bgColor);
   root.setProperty('--font-size', `${settings.fontSize}px`);
   root.setProperty('--bg-alpha', String(settings.bgOpacity));
+  root.setProperty('--bg-rgb', rgb.join(', '));
+  document.body.classList.toggle('light-bg', isLightBackground(rgb, settings.bgOpacity));
   document.body.classList.toggle('hide-original', !settings.showOriginal);
   document.body.classList.toggle('no-translation', settings.translator === 'off');
+  bgColorInput.value = settings.bgColor;
+  bgOpacityInput.value = settings.bgOpacity;
+  bgOpacityValue.textContent = `${Math.round(settings.bgOpacity * 100)}%`;
 }
 
 // ---------- hold timer ----------
@@ -47,9 +71,33 @@ function applyAppearance() {
 const holdTimerEl = $('holdTimer');
 let holdDeadline = null;
 let holdInterval = null;
+let holdAlarmPlayed = false;
+let alarmCtx = null;
+
+function playHoldAlarm() {
+  alarmCtx ??= new AudioContext();
+  const start = alarmCtx.currentTime + 0.05;
+  for (let i = 0; i < 3; i++) {
+    const t = start + i * 0.35;
+    const osc = alarmCtx.createOscillator();
+    const gain = alarmCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.4, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    osc.connect(gain).connect(alarmCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.26);
+  }
+}
 
 function renderHoldTimer() {
   const remaining = holdDeadline === null ? HOLD_TIME_MS : Math.max(0, holdDeadline - Date.now());
+  if (holdDeadline !== null && remaining === 0 && !holdAlarmPlayed) {
+    holdAlarmPlayed = true;
+    playHoldAlarm();
+  }
   const totalSeconds = Math.ceil(remaining / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = String(totalSeconds % 60).padStart(2, '0');
@@ -61,6 +109,7 @@ function renderHoldTimer() {
 
 function resetHoldTimer() {
   holdDeadline = Date.now() + HOLD_TIME_MS;
+  holdAlarmPlayed = false;
   clearInterval(holdInterval);
   holdInterval = setInterval(renderHoldTimer, 250);
   renderHoldTimer();
@@ -218,7 +267,7 @@ function watchForSilence(audioStream) {
       clearInterval(timer);
       setStatus(
         'connecting',
-        'No audio yet. Play something, or allow audio capture in System Settings › Privacy & Security.'
+        'No audio yet. Play something, or check that this app is allowed to capture system audio.'
       );
     }
   }, 250);
@@ -249,7 +298,7 @@ async function start() {
   const audioTracks = stream.getAudioTracks();
   if (audioTracks.length === 0) {
     stream.getTracks().forEach((t) => t.stop());
-    setStatus('error', 'No system audio track. macOS 13 or later is required.');
+    setStatus('error', 'No system audio track. This system does not support system-audio capture.');
     return;
   }
 
@@ -309,6 +358,7 @@ function openSettings() {
   form.deeplKey.value = settings.deeplKey;
   form.fontSize.value = settings.fontSize;
   form.bgOpacity.value = settings.bgOpacity;
+  form.bgColor.value = settings.bgColor;
   form.showOriginal.checked = settings.showOriginal;
   syncTranslatorFields();
   settingsPanel.hidden = false;
@@ -323,6 +373,7 @@ function readForm() {
     deeplKey: form.deeplKey.value.trim(),
     fontSize: Number(form.fontSize.value),
     bgOpacity: Number(form.bgOpacity.value),
+    bgColor: form.bgColor.value,
     showOriginal: form.showOriginal.checked,
   };
 }
@@ -371,10 +422,11 @@ $('settingsBtn').addEventListener('click', () => {
   else form.requestSubmit();
 });
 
+clickThroughBtn.title = `Click-through (${SHORTCUT_MODIFIERS}L)`;
 clickThroughBtn.addEventListener('click', () => window.captioner.setClickThrough(true));
 window.captioner.onClickThrough((enabled) => {
   clickThroughBtn.classList.toggle('active', enabled);
-  if (enabled) setStatus(session ? 'live' : 'idle', 'Click-through on · ⌘⇧L to unlock');
+  if (enabled) setStatus(session ? 'live' : 'idle', `Click-through on · ${SHORTCUT_MODIFIERS}L to unlock`);
   else setStatus(session ? 'live' : 'idle', session ? 'Listening' : 'Idle');
 });
 
@@ -395,6 +447,25 @@ translatorSelect.addEventListener('change', async () => {
     syncTranslatorFields();
   }
 });
+
+function previewBackground() {
+  settings = { ...settings, bgColor: bgColorInput.value, bgOpacity: Number(bgOpacityInput.value) };
+  applyAppearance();
+  if (!settingsPanel.hidden) {
+    form.bgColor.value = settings.bgColor;
+    form.bgOpacity.value = settings.bgOpacity;
+  }
+}
+
+async function saveBackground() {
+  previewBackground();
+  settings = await window.captioner.setSettings({ bgColor: settings.bgColor, bgOpacity: settings.bgOpacity });
+}
+
+for (const input of [bgColorInput, bgOpacityInput]) {
+  input.addEventListener('input', previewBackground);
+  input.addEventListener('change', saveBackground);
+}
 
 applyAppearance();
 renderHoldTimer();

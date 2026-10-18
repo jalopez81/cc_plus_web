@@ -1,10 +1,10 @@
-# Mac Live Captioner
+# Live Captioner
 
-A transparent, always-on-top macOS overlay that captions whatever your Mac is playing (a browser tab, Zoom, a livestream) in real time, with English ⇄ Spanish translation. No virtual audio driver required.
+A transparent, always-on-top desktop overlay that captions whatever your computer is playing (a browser tab, Zoom, a livestream) in real time, with English ⇄ Spanish translation. No virtual audio driver required.
 
 ## Requirements
 
-- macOS 13 Ventura or later (system-audio capture is not possible on macOS 12 without a driver such as BlackHole)
+- Windows 10 or later, or macOS 13 or later
 - Node.js 18+
 - A [Deepgram](https://console.deepgram.com/signup) API key (new accounts include free credit)
 
@@ -13,20 +13,26 @@ A transparent, always-on-top macOS overlay that captions whatever your Mac is pl
 ```bash
 npm install
 npm start          # run in development
-npm run make       # build a universal (Apple Silicon + Intel) .dmg and .zip into out/make
+npm run make       # build a .zip for the current platform (plus a .dmg on macOS) into out/make
+npm run make:mac   # macOS only: build a universal (Apple Silicon + Intel) .dmg and .zip
 ```
 
-On first launch, open **⚙ Settings**, paste your Deepgram key, and press **Start**. macOS will ask for permission to capture system audio; allow it. If captions never appear and the status says "No audio yet", check **System Settings › Privacy & Security › Screen & System Audio Recording**. In development, the app requesting permission may be your terminal or editor rather than "Mac Live Captioner".
+On first launch, open **⚙ Settings**, paste your Deepgram key, and press **Start**.
+
+On macOS, the system asks for permission to capture system audio; allow it. If captions never appear and the status says "No audio yet", check **System Settings › Privacy & Security › Screen & System Audio Recording**. In development, the app requesting permission may be your terminal or editor rather than "Live Captioner". Windows needs no permission prompt.
 
 ## Using it
+
+Shortcuts use **Ctrl+Shift** on Windows and **⌘⇧** on macOS.
 
 | Control | What it does |
 | --- | --- |
 | Source dropdown | **Auto** detects English/Spanish per sentence (Deepgram `multi`); or pin the source to English or Spanish for better accuracy |
 | Start / Stop | Begin or end capturing system audio |
-| Pin / ⌘⇧L | Toggle click-through so the overlay ignores the mouse |
-| ⌘⇧K | Show / hide the overlay |
+| Pin / Ctrl+Shift+L | Toggle click-through so the overlay ignores the mouse |
+| Ctrl+Shift+K | Show / hide the overlay |
 | Translator dropdown | Switch translation service on the fly (see below) |
+| Background / Opacity (second toolbar row) | Pick the window color and transparency; text switches to dark on light colors |
 | Drag the toolbar | Move the window; resize from the edges |
 
 The toolbar fades out while captioning and reappears on hover.
@@ -39,12 +45,12 @@ The toolbar fades out while captioning and reappears on hover.
 - **Apertium**: free, no key, open source. Slower and noticeably lower quality; best as a last resort.
 - **Off**: transcription only.
 
-API keys are stored encrypted with the macOS Keychain (`safeStorage`) in `~/Library/Application Support/Mac Live Captioner/settings.json`.
+API keys are stored encrypted with the OS credential store (`safeStorage`: Windows DPAPI or the macOS Keychain) in `settings.json`, under `%APPDATA%\Live Captioner\` on Windows or `~/Library/Application Support/Live Captioner/` on macOS. Settings from the old "Mac Live Captioner" folder are copied over on first launch; on macOS you may need to re-enter API keys.
 
 ## How it works
 
 ```
-getDisplayMedia (system audio loopback via CoreAudio Tap)
+getDisplayMedia (system audio loopback: WASAPI on Windows, CoreAudio Tap on macOS)
   └─ MediaRecorder (webm/opus, 250 ms chunks)
        └─ Deepgram live WebSocket (nova-3, interim results)
             └─ final segments ─ IPC ─▶ main process ─▶ DeepL / Google / MyMemory / Apertium
@@ -53,10 +59,10 @@ getDisplayMedia (system audio loopback via CoreAudio Tap)
 - `src/main.js`: creates the overlay window, grants `getDisplayMedia` requests with `audio: 'loopback'`, stores settings, and handles IPC. The video track it grants is the overlay's own window, so Screen Recording permission is not needed. If that fails, it falls back to capturing the screen.
 - `src/translate.js`: translation providers. These run in the main process to avoid CORS restrictions.
 - `src/renderer/`: overlay UI, the Deepgram streaming client, and caption rendering.
-- `scripts/patch-dev-plist.js`: adds `NSAudioCaptureUsageDescription` to the dev `Electron.app`. Without this key, macOS 14.2+ silently returns a silent audio stream. Packaged builds get the key from `forge.config.js`.
+- `scripts/patch-dev-plist.js` (macOS only; a no-op elsewhere): adds `NSAudioCaptureUsageDescription` to the dev `Electron.app`. Without this key, macOS 14.2+ silently returns a silent audio stream. Packaged builds get the key from `forge.config.js`.
 
 ## Deviations from the original spec
 
-- **Electron 44 instead of 28.** Loopback capture of macOS system audio only became the default in Electron 39 (via the CoreAudio Tap API). On Electron 28 it is Windows-only.
+- **Electron 44 instead of 28.** Electron 28 can capture system audio only on Windows; macOS support arrived in Electron 39 (via the CoreAudio Tap API).
 - **No Web Speech API engine.** `webkitSpeechRecognition` exists in Electron, but it produces no results: Electron does not ship Google's speech service keys, and on-device recognition reports `unavailable`. It also can only listen to the default microphone, not a captured stream. Deepgram is therefore the transcription engine. A fully offline/free option (e.g. whisper.cpp or Vosk) would be the natural next engine to add.
 - **Captures all system audio, not one tab.** Electron cannot select a single Chrome tab, so mute other sources while captioning.

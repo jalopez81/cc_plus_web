@@ -22,7 +22,7 @@ if (!fs.existsSync(plist)) {
 if (!fs.existsSync(plist)) process.exit(0);
 
 const KEY = 'NSAudioCaptureUsageDescription';
-const VALUE = 'Mac Live Captioner listens to system audio to generate live captions.';
+const VALUE = 'Live Captioner listens to system audio to generate live captions.';
 
 try {
   const current = execFileSync('plutil', ['-extract', KEY, 'raw', plist], {

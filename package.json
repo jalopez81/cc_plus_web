@@ -1,8 +1,8 @@
 {
-  "name": "mac-live-captioner",
-  "productName": "Mac Live Captioner",
+  "name": "live-captioner",
+  "productName": "Live Captioner",
   "version": "1.0.0",
-  "description": "Transparent macOS overlay with real-time English/Spanish captions and translation of system audio.",
+  "description": "Transparent desktop overlay with real-time English/Spanish captions and translation of system audio.",
   "main": "src/main.js",
   "license": "MIT",
   "scripts": {
@@ -10,7 +10,8 @@
     "prestart": "node scripts/patch-dev-plist.js",
     "start": "electron-forge start",
     "package": "electron-forge package",
-    "make": "electron-forge make --arch=universal"
+    "make": "electron-forge make",
+    "make:mac": "electron-forge make --arch=universal"
   },
   "engines": {
     "node": ">=18"
