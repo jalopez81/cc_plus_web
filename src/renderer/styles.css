@@ -1,0 +1,393 @@
+:root {
+  --font-size: 26px;
+  --bg-alpha: 0.72;
+  --accent: #5ac8fa;
+  --text: #ffffff;
+  --muted: rgba(255, 255, 255, 0.62);
+  --spanish: #ffd60a;
+  --spanish-muted: rgba(255, 214, 10, 0.72);
+  --border: rgba(255, 255, 255, 0.14);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  color: var(--text);
+  user-select: none;
+}
+
+.overlay {
+  position: absolute;
+  inset: 6px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px;
+  background: rgba(14, 16, 22, var(--bg-alpha));
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.toolbar {
+  -webkit-app-region: drag;
+}
+
+button,
+select,
+input,
+.controls,
+.settings {
+  -webkit-app-region: no-drag;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  order: -1;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hold-timer {
+  flex: none;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.hold-timer.paused {
+  color: var(--muted);
+}
+
+.hold-timer.warning {
+  background: rgba(255, 159, 10, 0.25);
+  color: #ff9f0a;
+}
+
+.hold-timer.expired {
+  background: #ff453a;
+  color: #fff;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8e8e93;
+}
+
+.dot.live {
+  background: #30d158;
+  box-shadow: 0 0 8px #30d158;
+}
+
+.dot.connecting {
+  background: #ffd60a;
+}
+
+.dot.error {
+  background: #ff453a;
+}
+
+.controls {
+  display: flex;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
+button,
+select,
+input {
+  font: inherit;
+  color: var(--text);
+}
+
+button,
+select {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+#settingsBtn {
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 9px;
+}
+
+#collapseBtn {
+  font-size: 10px;
+  padding: 4px 9px;
+}
+
+button:hover,
+select:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #00131c;
+  font-weight: 600;
+}
+
+button.active {
+  background: #ff9f0a;
+  color: #1c1000;
+}
+
+select option {
+  color: #000;
+}
+
+.captions {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 0 14px 16px 22px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-app-region: no-drag;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 36px);
+}
+
+/* Bottom-anchors captions; justify-content: flex-end would make overflow above the fold unscrollable. */
+.captions > .cap:first-of-type {
+  margin-top: auto;
+}
+
+.captions::-webkit-scrollbar {
+  width: 8px;
+}
+
+.captions::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+}
+
+.captions::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.36);
+}
+
+.captions::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.placeholder {
+  margin: auto;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.cap {
+  flex: none;
+  max-width: 78%;
+  padding: 8px 14px 10px;
+  border-radius: 16px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.cap:not([data-lang='es']) {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.1);
+  border-bottom-left-radius: 4px;
+}
+
+.cap[data-lang='es'] {
+  align-self: flex-end;
+  background: rgba(255, 214, 10, 0.12);
+  border-bottom-right-radius: 4px;
+}
+
+.cap .time {
+  float: right;
+  margin: 2px 0 0 12px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  text-shadow: none;
+}
+
+.cap .text,
+.cap .tr {
+  white-space: pre-line;
+}
+
+.cap .src {
+  font-size: calc(var(--font-size) * 0.7);
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+.cap .tr {
+  font-size: calc(var(--font-size) * 0.85);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.cap .tr:empty {
+  display: none;
+}
+
+.cap.interim .src {
+  font-style: italic;
+}
+
+.cap .flag {
+  font-size: 22px;
+  line-height: 1;
+  margin-right: 6px;
+  vertical-align: -3px;
+  font-style: normal;
+}
+
+.cap .flag:empty {
+  display: none;
+}
+
+.cap .lang {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  margin-right: 8px;
+  border-radius: 4px;
+  vertical-align: 2px;
+  background: rgba(90, 200, 250, 0.22);
+  color: var(--accent);
+  font-style: normal;
+}
+
+.cap[data-lang='es'] .src .text {
+  color: var(--spanish-muted);
+}
+
+.cap[data-lang='es'] .lang {
+  background: rgba(255, 214, 10, 0.2);
+  color: var(--spanish);
+}
+
+.cap:not([data-lang='es']) .tr,
+body.no-translation .cap[data-lang='es'] .src .text {
+  color: var(--spanish);
+}
+
+body.hide-original .cap .src {
+  display: none;
+}
+
+body.hide-original .cap:has(.tr:empty) .src,
+body.no-translation .cap .src {
+  display: block;
+}
+
+.overlay.collapsed .captions,
+.overlay.collapsed .settings {
+  display: none;
+}
+
+body.no-translation .cap .src {
+  font-size: calc(var(--font-size) * 0.85);
+  color: var(--text);
+  font-weight: 600;
+  font-style: normal;
+}
+
+.settings {
+  position: absolute;
+  inset: 40px 12px 12px;
+  z-index: 10;
+  padding: 14px 16px;
+  background: rgb(20, 22, 30);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow-y: auto;
+  -webkit-app-region: no-drag;
+  user-select: text;
+  font-size: 13px;
+}
+
+.settings form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.settings label[hidden] {
+  display: none;
+}
+
+.settings input[type='password'],
+.settings input[type='email'],
+.settings select {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.settings .row {
+  display: flex;
+  gap: 16px;
+}
+
+.settings .row label {
+  flex: 1;
+}
+
+.settings label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings .actions {
+  display: flex;
+  justify-content: flex-end;
+}
