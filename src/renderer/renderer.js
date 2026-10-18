@@ -25,6 +25,7 @@ const clickThroughBtn = $('clickThroughBtn');
 let settings = await window.captioner.getSettings();
 let session = null;
 let currentBlock = null;
+let blockCounter = 0;
 let lastProvider = null;
 
 // ---------- status & appearance ----------
@@ -141,7 +142,7 @@ function createBlock(lang) {
     captionsEl.querySelector('.cap').remove();
   }
   scrollToBottom();
-  return { el, lang: baseLang(lang), segments: [], interim: '' };
+  return { id: ++blockCounter, el, lang: baseLang(lang), segments: [], interim: '' };
 }
 
 const formatTime = (date) =>
@@ -152,25 +153,103 @@ function scrollToBottom() {
 }
 
 const SENTENCE_END = /(?<!\b(?:Mr|Mrs|Ms|Dr|Dra|Sr|Sra|Srta|Jr|St|Ud|Uds|vs))([.!?…])\s+/g;
-const breakSentences = (text) => text.replace(SENTENCE_END, '$1\n');
+const ENDS_SENTENCE = /[.!?…]["'”)\]]*$/;
+const splitSentences = (text) =>
+  text
+    .replace(SENTENCE_END, '$1\n')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+// Translations arrive per Deepgram segment, so sentences pair 1:1 only when both sides split into
+// the same count; otherwise the whole segment is one pair rather than risk mismatched siblings.
+function pairSegment(blockId, index, seg) {
+  const src = splitSentences(seg.src);
+  const tr = seg.tr ? splitSentences(seg.tr) : [];
+  const base = `${blockId}:${index}`;
+  const oneToOne = tr.length === 0 || src.length === tr.length;
+  const pairOf = (j) => (oneToOne ? `${base}:${j}` : base);
+  return {
+    src: src.map((text, j) => ({ text, pair: pairOf(j) })),
+    tr: tr.map((text, j) => ({ text, pair: pairOf(j) })),
+  };
+}
+
+function fillSentences(container, items) {
+  const nodes = [];
+  items.forEach((item, k) => {
+    if (k > 0) nodes.push(ENDS_SENTENCE.test(items[k - 1].text) ? '\n' : ' ');
+    if (!item.pair) {
+      nodes.push(item.text);
+      return;
+    }
+    const span = document.createElement('span');
+    span.className = 'sentence';
+    span.dataset.pair = item.pair;
+    span.textContent = item.text;
+    span.classList.toggle('hovered', item.pair === hoveredPair);
+    span.classList.toggle('selected', item.pair === selectedPair);
+    nodes.push(span);
+  });
+  container.replaceChildren(...nodes);
+}
 
 function renderBlock(block) {
-  const finalText = block.segments.map((s) => s.src).join(' ');
-  block.el.querySelector('.text').textContent = breakSentences(
-    [finalText, block.interim].filter(Boolean).join(' ')
-  );
-
-  const translated = [];
-  for (const seg of block.segments) {
+  const srcItems = [];
+  const trItems = [];
+  let trPending = false;
+  block.segments.forEach((seg, i) => {
+    const { src, tr } = pairSegment(block.id, i, seg);
+    srcItems.push(...src);
+    if (trPending) return;
     if (seg.tr === undefined) {
-      translated.push('…');
-      break;
+      trItems.push({ text: '…' });
+      trPending = true;
+    } else {
+      trItems.push(...tr);
     }
-    if (seg.tr) translated.push(seg.tr);
-  }
-  block.el.querySelector('.tr').textContent = breakSentences(translated.join(' '));
+  });
+  if (block.interim) srcItems.push(...splitSentences(block.interim).map((text) => ({ text })));
+
+  fillSentences(block.el.querySelector('.text'), srcItems);
+  fillSentences(block.el.querySelector('.tr'), trItems);
   scrollToBottom();
 }
+
+// ---------- sentence highlighting ----------
+
+let hoveredPair = null;
+let selectedPair = null;
+
+function markPair(pair, className, on) {
+  if (!pair) return;
+  for (const el of captionsEl.querySelectorAll(`.sentence[data-pair="${pair}"]`)) {
+    el.classList.toggle(className, on);
+  }
+}
+
+const pairAt = (target) => target.closest?.('.sentence')?.dataset.pair ?? null;
+
+captionsEl.addEventListener('mouseover', (e) => {
+  const pair = pairAt(e.target);
+  if (pair === hoveredPair) return;
+  markPair(hoveredPair, 'hovered', false);
+  hoveredPair = pair;
+  markPair(hoveredPair, 'hovered', true);
+});
+
+captionsEl.addEventListener('mouseleave', () => {
+  markPair(hoveredPair, 'hovered', false);
+  hoveredPair = null;
+});
+
+captionsEl.addEventListener('click', (e) => {
+  const pair = pairAt(e.target);
+  if (!pair || pair === selectedPair) return;
+  markPair(selectedPair, 'selected', false);
+  selectedPair = pair;
+  markPair(selectedPair, 'selected', true);
+});
 
 function commitBlock() {
   if (!currentBlock) return;
@@ -231,6 +310,8 @@ function handleUtteranceEnd() {
 
 function clearCaptions() {
   currentBlock = null;
+  hoveredPair = null;
+  selectedPair = null;
   captionsEl.querySelectorAll('.cap').forEach((el) => el.remove());
   placeholder.hidden = false;
 }

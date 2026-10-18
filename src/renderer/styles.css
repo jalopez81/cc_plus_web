@@ -8,6 +8,7 @@
   --muted: rgba(255, 255, 255, 0.62);
   --spanish: #ffd60a;
   --english: #5ac8fa;
+  --highlight: #ff9f0a;
   --border: rgba(255, 255, 255, 0.14);
   --surface: rgba(255, 255, 255, 0.1);
   --surface-hover: rgba(255, 255, 255, 0.18);
@@ -21,6 +22,7 @@ body.light-bg {
   --muted: rgba(0, 0, 0, 0.58);
   --spanish: #8a5a00;
   --english: #0a6c94;
+  --highlight: #c25e00;
   --border: rgba(0, 0, 0, 0.14);
   --surface: rgba(0, 0, 0, 0.07);
   --surface-hover: rgba(0, 0, 0, 0.14);
@@ -290,6 +292,9 @@ select option {
 
 .cap {
   flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 12px;
   max-width: 78%;
   padding: 8px 14px 10px;
   border-radius: 16px;
@@ -309,17 +314,37 @@ select option {
 }
 
 .cap .time {
-  float: right;
-  margin: 2px 0 0 12px;
+  grid-column: 2;
+  grid-row: 1;
+  margin-top: 2px;
+  white-space: nowrap;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
   text-shadow: none;
 }
 
+.cap .src {
+  grid-column: 1;
+}
+
+.cap .tr {
+  grid-column: 1 / -1;
+}
+
+/* With the original hidden, the translation shares the first row with the time. */
+body.hide-original .cap:not(:has(.tr:empty)) .tr {
+  grid-column: 1;
+}
+
 .cap .text,
 .cap .tr {
   white-space: pre-line;
+}
+
+.cap .src .text {
+  display: block;
+  margin-top: 2px;
 }
 
 .cap .src {
@@ -336,6 +361,21 @@ select option {
 
 .cap .tr:empty {
   display: none;
+}
+
+.cap .sentence {
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  border-radius: 4px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  cursor: pointer;
+  transition: outline-color 0.12s ease;
+}
+
+.cap .sentence.hovered,
+.cap .sentence.selected {
+  outline-color: var(--highlight);
 }
 
 .cap.interim .src {
