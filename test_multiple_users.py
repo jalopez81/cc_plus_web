@@ -1,3 +1,5 @@
+# python test_multiple_users.py wss://8zq5ahyxioh9f3-8000.proxy.runpod.net/ws/transcribe 15 test.wav
+
 import asyncio, json, sys, time, wave, statistics
 import websockets
 
