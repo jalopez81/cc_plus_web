@@ -271,16 +271,32 @@ function commitBlock() {
 async function translateSegment(block, seg) {
   if (settings.translator === 'off') {
     seg.tr = '';
+    renderBlock(block);
     return;
   }
-  const result = await window.captioner.translate(seg.src, block.lang, targetFor(block.lang));
-  seg.tr = result.text;
-  if (result.error) {
+  try {
+    const result = await window.captioner.translate(seg.src, block.lang, targetFor(block.lang));
+    seg.tr = result.text;
+    if (result.error) {
+      lastProvider = null;
+      let message = result.error;
+      if (message === 'DeepL API key is not set') {
+        message = 'Add your DeepL API key in Settings to translate.';
+      } else if (message.includes('HTTP 456')) {
+        message = 'DeepL monthly character quota exceeded (HTTP 456); check your account.';
+      } else if (message.includes('DeepL: HTTP 403')) {
+        message = 'DeepL rejected the API key (HTTP 403); check it in Settings.';
+      }
+      setStatus('live', `Translation unavailable: ${message}`);
+    } else if (result.provider && result.provider !== lastProvider) {
+      lastProvider = result.provider;
+      if (session) setStatus('live', `Listening · translating via ${result.provider}`);
+    }
+  } catch (err) {
+    seg.tr = '';
     lastProvider = null;
-    setStatus('live', `Listening · translation error: ${result.error}`);
-  } else if (result.provider && result.provider !== lastProvider) {
-    lastProvider = result.provider;
-    if (session) setStatus('live', `Listening · translating via ${result.provider}`);
+    console.error('Translation request failed:', err);
+    setStatus('live', `Translation unavailable: ${err.message || 'request failed'}`);
   }
   renderBlock(block);
 }
@@ -297,9 +313,13 @@ function handleTranscript({ text, language, translation }) {
   }
   if (!currentBlock) currentBlock = createBlock(lang);
 
-  const seg = { src: transcript, tr: translated };
+  const seg = {
+    src: transcript,
+    tr: translated || (settings.translator === 'off' ? '' : undefined),
+  };
   currentBlock.segments.push(seg);
   renderBlock(currentBlock);
+  if (seg.tr === undefined) void translateSegment(currentBlock, seg);
 }
 
 function handleUtteranceEnd() {

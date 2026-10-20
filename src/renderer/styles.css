@@ -221,9 +221,9 @@ textarea {
 
 button,
 select,
-input {
-  font: inherit;
-  color: var(--text);
+input {  
+  background-color:rgba(233, 230, 230, 0.938);
+  font: inherit;  
 }
 
 button,

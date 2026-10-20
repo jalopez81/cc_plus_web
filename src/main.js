@@ -64,13 +64,13 @@ function loadSettings() {
 
 function saveSettings(settings) {
   const out = { ...settings };
-  if (safeStorage.isEncryptionAvailable()) {
-    for (const key of SECRET_KEYS) {
-      if (out[key]) {
-        out[key] = safeStorage.encryptString(out[key]).toString('base64');
-        out[`${key}Encrypted`] = true;
-      }
-    }
+  const secretsToEncrypt = SECRET_KEYS.filter((key) => out[key]);
+  if (secretsToEncrypt.length > 0 && !safeStorage.isEncryptionAvailable()) {
+    throw new Error('Cannot save API keys because secure OS credential storage is unavailable.');
+  }
+  for (const key of secretsToEncrypt) {
+    out[key] = safeStorage.encryptString(out[key]).toString('base64');
+    out[`${key}Encrypted`] = true;
   }
   fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
   fs.writeFileSync(settingsPath(), JSON.stringify(out, null, 2));

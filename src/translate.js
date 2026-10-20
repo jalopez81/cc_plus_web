@@ -8,7 +8,8 @@ class QuotaError extends Error {}
 
 async function request(url, options) {
   const res = await fetch(url, { ...options, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-  if (res.status === 429 || res.status === 456) throw new QuotaError(`HTTP ${res.status} (quota or rate limit)`);
+  if (res.status === 429) throw new QuotaError('rate limit exceeded (HTTP 429)');
+  if (res.status === 456) throw new QuotaError('monthly character quota exceeded (HTTP 456)');
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }

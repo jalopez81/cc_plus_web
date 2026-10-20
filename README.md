@@ -40,7 +40,7 @@ Shortcuts use **Ctrl+Shift** on Windows and **⌘⇧** on macOS.
 | Background / Opacity (second toolbar row) | Pick the window color and transparency; text switches to dark on light colors |
 | Native title bar | Move, minimize, maximize, close, and resize the window |
 
-**Translation providers** (toolbar dropdown or Settings):
+**Translation providers** (toolbar dropdown or Settings) translate each transcript segment as it arrives:
 - **Auto**: tries DeepL (if a key is set), then Google, MyMemory, and Apertium, using the first that succeeds. A service that fails is skipped for 5 minutes, or 1 hour if it reports its quota is used up. The status bar shows which service is translating.
 - **DeepL**: highest quality; free API keys (500,000 characters/month) and paid keys both work.
 - **Google**: free, no key. Uses Google's unofficial web endpoint, which can rate-limit heavy use.
@@ -48,7 +48,7 @@ Shortcuts use **Ctrl+Shift** on Windows and **⌘⇧** on macOS.
 - **Apertium**: free, no key, open source. Slower and noticeably lower quality; best as a last resort.
 - **Off**: transcription only.
 
-API keys are stored encrypted with the OS credential store (`safeStorage`: Windows DPAPI or the macOS Keychain) in `settings.json`, under `%APPDATA%\Live Captioner\` on Windows or `~/Library/Application Support/Live Captioner/` on macOS. Settings from the old "Mac Live Captioner" folder are copied over on first launch; on macOS you may need to re-enter API keys.
+Each user's DeepL API key is sent only to DeepL for that user's translations; it is not shared with a global account. API keys are stored encrypted with the OS credential store (`safeStorage`: Windows DPAPI or the macOS Keychain) in `settings.json`, under `%APPDATA%\Live Captioner\` on Windows or `~/Library/Application Support/Live Captioner/` on macOS. The app refuses to save a key if secure OS credential storage is unavailable. Settings from the old "Mac Live Captioner" folder are copied over on first launch; on macOS you may need to re-enter API keys.
 
 ## How it works
 
