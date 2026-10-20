@@ -1,12 +1,13 @@
 # Live Captioner
 
-A resizable desktop window that captions whatever your computer is playing (a browser tab, Zoom, a livestream) in real time, with English ⇄ Spanish translation and built-in interpreter tools. No virtual audio driver required.
+A resizable desktop window that captions computer audio (such as YouTube, a browser call, or a livestream) in real time, with English ⇄ Spanish translation and built-in interpreter tools. It captures system loopback audio, not your microphone.
 
 ## Requirements
 
 - Windows 10 or later, or macOS 13 or later
 - Node.js 18+
-- A [Deepgram](https://console.deepgram.com/signup) API key (new accounts include free credit)
+- A live transcription backend exposing a `wss://.../ws/transcribe` endpoint
+- Optional: `CC_PLUS_TRANSCRIPTION_URL` environment variable for the default WebSocket URL
 
 ## Getting started
 
@@ -17,9 +18,9 @@ npm run make       # build a .zip for the current platform (plus a .dmg on macOS
 npm run make:mac   # macOS only: build a universal (Apple Silicon + Intel) .dmg and .zip
 ```
 
-On first launch, open **⚙ Settings**, paste your Deepgram key, and press **Start**.
+On first launch, open **⚙ Settings**, paste the transcription WebSocket URL (for example `wss://your-ngrok-host/ws/transcribe`), and press **Start**. You can also set `CC_PLUS_TRANSCRIPTION_URL` before launch to prefill the value.
 
-On macOS, the system asks for permission to capture system audio; allow it. If captions never appear and the status says "No audio yet", check **System Settings › Privacy & Security › Screen & System Audio Recording**. In development, the app requesting permission may be your terminal or editor rather than "Live Captioner". Windows needs no permission prompt.
+To test, play a YouTube video on your computer and press **Start**. The app captures computer/system audio through Electron's loopback capture; it does not listen to your microphone. On macOS, allow the system-audio recording permission prompt. If no captions appear, check **System Settings › Privacy & Security › Screen & System Audio Recording**. In development, the app requesting permission may be your terminal or editor rather than "Live Captioner".
 
 ## Interpreter tools
 
@@ -31,8 +32,8 @@ Shortcuts use **Ctrl+Shift** on Windows and **⌘⇧** on macOS.
 
 | Control | What it does |
 | --- | --- |
-| Source dropdown | **Auto** detects English/Spanish per sentence (Deepgram `multi`); or pin the source to English or Spanish for better accuracy |
-| Start / Stop | Begin or end capturing system audio |
+| Source dropdown | **Auto** detects English/Spanish per phrase; the backend determines the language |
+| Start / Stop | Begin or end capturing computer/system audio (not microphone audio) |
 | Pin / Ctrl+Shift+L | Toggle click-through so the overlay ignores the mouse |
 | Ctrl+Shift+K | Show / hide the window |
 | Translator dropdown | Switch translation service on the fly (see below) |
@@ -52,19 +53,17 @@ API keys are stored encrypted with the OS credential store (`safeStorage`: Windo
 ## How it works
 
 ```
-getDisplayMedia (system audio loopback: WASAPI on Windows, CoreAudio Tap on macOS)
-  └─ MediaRecorder (webm/opus, 250 ms chunks)
-       └─ Deepgram live WebSocket (nova-3, interim results)
-            └─ final segments ─ IPC ─▶ main process ─▶ DeepL / Google / MyMemory / Apertium
+getDisplayMedia (Electron system-audio loopback)
+  └─ AudioWorklet / ScriptProcessor (16 kHz mono PCM Int16)
+       └─ configurable transcription WebSocket
+            └─ transcript + translation JSON ─▶ captions
 ```
 
-- `src/main.js`: creates the overlay window, grants `getDisplayMedia` requests with `audio: 'loopback'`, stores settings, and handles IPC. The video track it grants is the overlay's own window, so Screen Recording permission is not needed. If that fails, it falls back to capturing the screen.
+- `src/main.js`: creates the overlay window, grants `getDisplayMedia` requests with `audio: 'loopback'`, stores settings, and handles IPC. A video track is requested to activate Electron's display-media capture API; only the audio track is sent to the transcription service.
 - `src/translate.js`: translation providers. These run in the main process to avoid CORS restrictions.
-- `src/renderer/`: overlay UI, the Deepgram streaming client, and caption rendering.
-- `scripts/patch-dev-plist.js` (macOS only; a no-op elsewhere): adds `NSAudioCaptureUsageDescription` to the dev `Electron.app`. Without this key, macOS 14.2+ silently returns a silent audio stream. Packaged builds get the key from `forge.config.js`.
+- `src/renderer/`: overlay UI, the transcription WebSocket client, PCM audio capture, and caption rendering.
+- `scripts/patch-dev-plist.js` (macOS only; a no-op elsewhere): adds `NSAudioCaptureUsageDescription` to the dev `Electron.app`, which is required for macOS system-audio capture.
 
 ## Deviations from the original spec
 
-- **Electron 44 instead of 28.** Electron 28 can capture system audio only on Windows; macOS support arrived in Electron 39 (via the CoreAudio Tap API).
-- **No Web Speech API engine.** `webkitSpeechRecognition` exists in Electron, but it produces no results: Electron does not ship Google's speech service keys, and on-device recognition reports `unavailable`. It also can only listen to the default microphone, not a captured stream. Deepgram is therefore the transcription engine. A fully offline/free option (e.g. whisper.cpp or Vosk) would be the natural next engine to add.
-- **Captures all system audio, not one tab.** Electron cannot select a single Chrome tab, so mute other sources while captioning.
+- **Captures computer audio, not a single browser tab.** Other system audio may be included along with YouTube or a browser call.

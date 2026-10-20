@@ -12,11 +12,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { translate } = require('./translate');
 
-const SECRET_KEYS = ['deepgramKey', 'deeplKey'];
+const SECRET_KEYS = ['deeplKey'];
 const DEFAULT_SETTINGS = {
-  deepgramKey: '8cc95dbd9338f31d9f2ed0d5361ef3d7940257d7',
+  transcriptionUrl: process.env.CC_PLUS_TRANSCRIPTION_URL || '',
   sourceMode: 'auto', // 'auto' (EN↔ES), 'en' (EN→ES), 'es' (ES→EN)
-  translator: 'auto', // 'auto' | 'deepl' | 'google' | 'mymemory' | 'apertium' | 'off'
+  translator: 'off', // backend handles the translation, this remains for compatibility with the existing UI
   deeplKey: '',
   myMemoryEmail: '',
   fontSize: 26,
@@ -138,13 +138,14 @@ function registerDisplayMediaHandler() {
         callback({ video: request.frame, audio: 'loopback' });
         return;
       }
+
       const [source] = await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: { width: 0, height: 0 },
       });
       callback(source ? { video: source, audio: 'loopback' } : null);
     } catch (err) {
-      console.error('Display media request failed:', err);
+      console.error('System audio capture request failed:', err);
       callback(null);
     }
   });
@@ -168,7 +169,6 @@ function registerIpc() {
 
 app.whenReady().then(() => {
   migrateLegacySettings();
-  // getDisplayMedia arrives as 'media' with no mediaTypes; mic/camera requests list them. Only allow the former.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => {
     cb(permission === 'media' && (details.mediaTypes ?? []).length === 0);
   });

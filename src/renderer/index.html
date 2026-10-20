@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src wss://api.deepgram.com; media-src 'self' blob: mediastream:"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws: wss:; media-src 'self' blob: mediastream:"
     />
     <title>LCP - Live Caption Plus</title>
     <link rel="icon" href="../../favicon.ico" sizes="any" />
@@ -161,8 +161,8 @@
       <section class="settings" id="settings" hidden>
         <form id="settingsForm">
           <label>
-            Deepgram API key
-            <input type="password" name="deepgramKey" autocomplete="off" placeholder="Required for transcription" />
+            Transcription WebSocket URL
+            <input type="url" name="transcriptionUrl" autocomplete="off" placeholder="wss://.../ws/transcribe" />
           </label>
           <label>
             Translator

@@ -1,11 +1,7 @@
-import { DeepgramStream } from './deepgram.js';
+import { TranscriptionStream } from './deepgram.js';
 import './interpreter.js';
 
 const MAX_BLOCKS = 200;
-const SILENCE_WARNING_MS = 8000;
-const AUDIO_ACTIVITY_THRESHOLD = 0.01;
-const SILENCE_WINDOW_MS = 1800;
-const AUDIO_CHECK_INTERVAL_MS = 100;
 const HOLD_TIME_MS = 15 * 60 * 1000;
 const HOLD_WARNING_MS = 2 * 60 * 1000;
 const FONT_MIN = 16;
@@ -28,6 +24,7 @@ const clickThroughBtn = $('clickThroughBtn');
 
 let settings = await window.captioner.getSettings();
 let session = null;
+let captureStarting = false;
 let currentBlock = null;
 let blockCounter = 0;
 let lastProvider = null;
@@ -288,29 +285,21 @@ async function translateSegment(block, seg) {
   renderBlock(block);
 }
 
-function handleTranscript({ text, isFinal, speechFinal, language }) {
+function handleTranscript({ text, language, translation }) {
   const lang = baseLang(language);
+  const transcript = String(text ?? '').trim();
+  const translated = typeof translation === 'string' ? translation.trim() : '';
+  if (!transcript) return;
+
   if (text) resetHoldTimer();
-  if (text && currentBlock && currentBlock.lang !== lang) {
+  if (currentBlock && currentBlock.lang !== lang) {
     commitBlock();
   }
-  if (text && !currentBlock) currentBlock = createBlock(lang);
-  if (!currentBlock) return;
+  if (!currentBlock) currentBlock = createBlock(lang);
 
-  if (isFinal) {
-    currentBlock.interim = '';
-    if (text) {
-      const seg = { src: text, tr: undefined };
-      currentBlock.segments.push(seg);
-      translateSegment(currentBlock, seg);
-    }
-    renderBlock(currentBlock);
-    if (speechFinal) currentBlock.el.classList.remove('interim');
-  } else {
-    currentBlock.interim = text;
-    currentBlock.el.classList.add('interim');
-    renderBlock(currentBlock);
-  }
+  const seg = { src: transcript, tr: translated };
+  currentBlock.segments.push(seg);
+  renderBlock(currentBlock);
 }
 
 function handleUtteranceEnd() {
@@ -328,119 +317,90 @@ function clearCaptions() {
 // ---------- capture ----------
 
 async function captureSystemAudio() {
-  const request = () => navigator.mediaDevices.getDisplayMedia({ audio: true, video: { frameRate: 1 } });
+  const request = () =>
+    navigator.mediaDevices.getDisplayMedia({ audio: true, video: { frameRate: 1 } });
   try {
     await window.captioner.setCaptureMode('window');
     return await request();
   } catch (err) {
     if (err.name === 'NotAllowedError') throw err;
     await window.captioner.setCaptureMode('screen');
-    return await request();
+    return request();
   }
-}
-
-function watchForSilence(audioStream, deepgram) {
-  const ctx = new AudioContext();
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize = 2048;
-  const source = ctx.createMediaStreamSource(audioStream);
-  source.connect(analyser);
-  const buf = new Float32Array(analyser.fftSize);
-  const startedAt = Date.now();
-  let lastActivityAt = null;
-  let audioActive = false;
-  let hasHeardAudio = false;
-  let warnedAboutMissingAudio = false;
-
-  ctx.resume().catch((err) => console.error('Failed to resume audio activity detection:', err));
-
-  const timer = setInterval(() => {
-    analyser.getFloatTimeDomainData(buf);
-    let sumSquares = 0;
-    for (const sample of buf) sumSquares += sample * sample;
-    const rms = Math.sqrt(sumSquares / buf.length);
-    const now = Date.now();
-
-    if (rms >= AUDIO_ACTIVITY_THRESHOLD) {
-      lastActivityAt = now;
-      hasHeardAudio = true;
-      if (!audioActive) {
-        audioActive = true;
-        deepgram.setAudioActive(true);
-      }
-    } else if (audioActive && now - lastActivityAt >= SILENCE_WINDOW_MS) {
-      audioActive = false;
-      deepgram.setAudioActive(false);
-    }
-
-    if (!hasHeardAudio && !warnedAboutMissingAudio && now - startedAt >= SILENCE_WARNING_MS) {
-      warnedAboutMissingAudio = true;
-      setStatus(
-        'connecting',
-        'No audio yet. Play something, or check that this app is allowed to capture system audio.'
-      );
-    }
-  }, AUDIO_CHECK_INTERVAL_MS);
-
-  return () => {
-    clearInterval(timer);
-    source.disconnect();
-    analyser.disconnect();
-    ctx.close();
-  };
 }
 
 async function start() {
-  if (!settings.deepgramKey) {
+  if (session || captureStarting) return;
+  captureStarting = true;
+  toggleBtn.disabled = true;
+
+  if (!settings.transcriptionUrl) {
     openSettings();
-    form.deepgramKey.focus();
-    setStatus('error', 'Add a Deepgram API key to start.');
+    form.transcriptionUrl.focus();
+    setStatus('error', 'Add the transcription WebSocket URL to start.');
+    captureStarting = false;
+    toggleBtn.disabled = false;
     return;
   }
 
-  setStatus('connecting', 'Requesting system audio…');
+  if (!settings.transcriptionUrl.startsWith('wss://')) {
+    setStatus('error', 'The transcription server URL must start with wss://.');
+    captureStarting = false;
+    toggleBtn.disabled = false;
+    return;
+  }
+
+  setStatus('connecting', 'Requesting computer audio capture…');
   let stream;
   try {
     stream = await captureSystemAudio();
+    const audioTracks = stream.getAudioTracks();
+    stream.getVideoTracks().forEach((track) => track.stop());
+    if (audioTracks.length === 0) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error('No computer-audio track was provided by the system.');
+    }
+
+    const audioStream = new MediaStream(audioTracks);
+    const transcription = new TranscriptionStream({
+      url: settings.transcriptionUrl,
+      onTranscript: handleTranscript,
+      onStatus: (state, text) => {
+        if (state === 'disconnected') {
+          if (session?.transcription === transcription) {
+            stop({ keepStatus: true });
+            setStatus('idle', text);
+          }
+          return;
+        }
+        setStatus(state, text);
+        if (state === 'error') stop({ keepStatus: true });
+      },
+    });
+
+    session = { stream, transcription };
+    audioTracks[0].addEventListener('ended', () => stop());
+    await transcription.start(audioStream);
+    if (session?.transcription !== transcription) return;
+    resetHoldTimer();
+
+    toggleBtn.textContent = 'Stop';
+    overlay.classList.remove('idle');
   } catch (err) {
-    setStatus('error', `Audio capture failed: ${err.message || err.name}`);
-    return;
+    if (session) stop({ keepStatus: true });
+    else stream?.getTracks().forEach((track) => track.stop());
+    setStatus('error', `Computer audio capture failed: ${err.message || err.name}`);
+  } finally {
+    captureStarting = false;
+    toggleBtn.disabled = false;
   }
-
-  const audioTracks = stream.getAudioTracks();
-  if (audioTracks.length === 0) {
-    stream.getTracks().forEach((t) => t.stop());
-    setStatus('error', 'No system audio track. This system does not support system-audio capture.');
-    return;
-  }
-
-  const audioStream = new MediaStream(audioTracks);
-  const deepgram = new DeepgramStream({
-    apiKey: settings.deepgramKey,
-    sourceMode: settings.sourceMode,
-    onTranscript: handleTranscript,
-    onUtteranceEnd: handleUtteranceEnd,
-    onStatus: (state, text) => {
-      setStatus(state, text);
-      if (state === 'error') stop({ keepStatus: true });
-    },
-  });
-
-  session = { stream, deepgram, stopSilenceWatch: watchForSilence(audioStream, deepgram) };
-  audioTracks[0].addEventListener('ended', () => stop());
-  deepgram.start(audioStream);
-  resetHoldTimer();
-
-  toggleBtn.textContent = 'Stop';
-  overlay.classList.remove('idle');
 }
 
 function stop({ keepStatus = false } = {}) {
   if (!session) return;
-  const { stream, deepgram, stopSilenceWatch } = session;
+  const { stream, transcription } = session;
   session = null;
-  deepgram.stop();
-  stopSilenceWatch();
+  transcription.stop();
   stream.getTracks().forEach((t) => t.stop());
   stopHoldTimer();
   commitBlock();
@@ -464,7 +424,7 @@ function syncTranslatorFields() {
 }
 
 function openSettings() {
-  form.deepgramKey.value = settings.deepgramKey;
+  form.transcriptionUrl.value = settings.transcriptionUrl || '';
   form.translator.value = settings.translator;
   form.myMemoryEmail.value = settings.myMemoryEmail;
   form.deeplKey.value = settings.deeplKey;
@@ -479,7 +439,7 @@ function openSettings() {
 
 function readForm() {
   return {
-    deepgramKey: form.deepgramKey.value.trim(),
+    transcriptionUrl: form.transcriptionUrl.value.trim(),
     translator: form.translator.value,
     myMemoryEmail: form.myMemoryEmail.value.trim(),
     deeplKey: form.deeplKey.value.trim(),
@@ -498,13 +458,13 @@ form.addEventListener('input', () => {
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const keyChanged = form.deepgramKey.value.trim() !== (await window.captioner.getSettings()).deepgramKey;
+  const urlChanged = form.transcriptionUrl.value.trim() !== (await window.captioner.getSettings()).transcriptionUrl;
   settings = await window.captioner.setSettings(readForm());
   applyAppearance();
   translatorSelect.value = settings.translator;
   settingsPanel.hidden = true;
   overlay.classList.remove('settings-open');
-  if (keyChanged) await restartIfLive();
+  if (urlChanged) await restartIfLive();
   else if (!session) setStatus('idle', 'Idle');
 });
 

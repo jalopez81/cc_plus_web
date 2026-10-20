@@ -1,142 +1,177 @@
-const KEEPALIVE_MS = 8000;
-const CHUNK_MS = 250;
-const MAX_RECONNECTS = 3;
-
-function dominantLanguage(alt, fallback) {
-  if (alt.languages?.length) return alt.languages[0];
-  const counts = {};
-  for (const w of alt.words ?? []) {
-    if (w.language) counts[w.language] = (counts[w.language] ?? 0) + 1;
+function float32ToInt16(samples) {
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    out[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
   }
-  const [top] = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  return top ? top[0] : fallback;
+  return out;
 }
 
-/**
- * Streams an audio MediaStream to Deepgram's live transcription WebSocket.
- * Emits: onTranscript({ text, isFinal, speechFinal, language }), onUtteranceEnd(), onStatus(state, detail)
- */
-export class DeepgramStream {
-  constructor({ apiKey, sourceMode, onTranscript, onUtteranceEnd, onStatus }) {
-    this.apiKey = apiKey;
-    this.language = sourceMode === 'auto' ? 'multi' : sourceMode;
-    this.fallbackLang = sourceMode === 'es' ? 'es' : 'en';
+export class TranscriptionStream {
+  constructor({ url, onTranscript, onStatus }) {
+    this.url = url;
     this.onTranscript = onTranscript;
-    this.onUtteranceEnd = onUtteranceEnd;
     this.onStatus = onStatus;
-    this.reconnects = 0;
-    this.stopped = false;
-    this.audioActive = false;
+    this.ws = null;
+    this.audioContext = null;
+    this.processor = null;
+    this.recording = false;
   }
 
-  start(audioStream) {
-    this.audioStream = audioStream;
+  async start(audioStream) {
+    this.recording = true;
     this.connect();
-  }
-
-  setAudioActive(active) {
-    if (this.audioActive === active) return;
-    this.audioActive = active;
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.onStatus(active ? 'live' : 'idle', active ? 'Listening' : 'Silent · waiting for audio');
-    }
+    await this.startAudioPipeline(audioStream);
   }
 
   connect() {
-    const params = new URLSearchParams({
-      model: 'nova-3',
-      language: this.language,
-      interim_results: 'true',
-      smart_format: 'true',
-      punctuate: 'true',
-      endpointing: '300',
-      utterance_end_ms: '1000',
-      vad_events: 'true',
-    });
-    this.onStatus('connecting', 'Connecting to Deepgram…');
-    const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, ['token', this.apiKey]);
+    if (!this.url) {
+      this.onStatus('error', 'Add the transcription WebSocket URL in Settings.');
+      return;
+    }
+
+    this.onStatus('connecting', 'Connecting to transcription server…');
+    const ws = new WebSocket(this.url);
     this.ws = ws;
+    ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
-      this.reconnects = 0;
-      this.onStatus(
-        this.audioActive ? 'live' : 'idle',
-        this.audioActive ? 'Listening' : 'Silent · waiting for audio'
-      );
-      this.startRecorder();
-      this.keepAlive = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'KeepAlive' }));
-      }, KEEPALIVE_MS);
+      this.onStatus('live', 'Connected · listening');
     };
 
     ws.onmessage = (event) => {
-      let msg;
       try {
-        msg = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      if (msg.type === 'Results') {
-        const alt = msg.channel?.alternatives?.[0];
-        if (!alt) return;
-        this.onTranscript({
-          text: alt.transcript ?? '',
-          isFinal: Boolean(msg.is_final),
-          speechFinal: Boolean(msg.speech_final),
-          language: dominantLanguage(alt, this.fallbackLang),
-        });
-      } else if (msg.type === 'UtteranceEnd') {
-        this.onUtteranceEnd();
+        const data = JSON.parse(event.data);
+        if (data?.error) {
+          this.onStatus('error', String(data.error));
+          return;
+        }
+        if (data && typeof data.transcript === 'string') {
+          this.onTranscript({
+            text: data.transcript,
+            language: data.language || 'en',
+            translation: typeof data.translation === 'string' ? data.translation : '',
+            translation_language: data.translation_language ?? null,
+          });
+        }
+      } catch (err) {
+        console.error('Could not parse transcription message:', err);
       }
     };
 
-    ws.onerror = () => {};
+    ws.onerror = () => {
+      this.onStatus('error', 'WebSocket error. Check the URL and server status.');
+    };
 
-    let opened = false;
-    ws.addEventListener('open', () => (opened = true));
+    ws.onclose = () => {
+      this.teardown();
+      this.onStatus('disconnected', 'Disconnected · press Start to reconnect');
+    };
+  }
 
-    ws.onclose = (event) => {
-      this.teardownConnection();
-      if (this.stopped) return;
-      // Browsers surface a rejected handshake (bad key, no credit) only as 1006 before open.
-      if (!opened && this.reconnects === 0) {
-        this.onStatus('error', 'Could not connect to Deepgram. Check your API key and network.');
+  async startAudioPipeline(audioStream) {
+    const audioContext = new AudioContext({ sampleRate: 16000 });
+    this.audioContext = audioContext;
+    await audioContext.resume();
+    const source = audioContext.createMediaStreamSource(audioStream);
+    const gain = audioContext.createGain();
+    gain.gain.value = 0;
+
+    if (typeof AudioWorkletNode !== 'undefined') {
+      try {
+        const workletCode = `
+          class PCMProcessor extends AudioWorkletProcessor {
+            constructor() { super(); this.buf = new Int16Array(4096); this.n = 0; }
+            process(inputs) {
+              const channels = inputs[0];
+              if (!channels?.length) return true;
+              for (let i = 0; i < channels[0].length; i += 1) {
+                let mixed = 0;
+                for (let channel = 0; channel < channels.length; channel += 1) {
+                  mixed += channels[channel][i];
+                }
+                const sample = Math.max(-1, Math.min(1, mixed / channels.length));
+                this.buf[this.n++] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+                if (this.n === this.buf.length) {
+                  this.port.postMessage(this.buf.slice(0));
+                  this.n = 0;
+                }
+              }
+              return true;
+            }
+          }
+          registerProcessor('pcm-processor', PCMProcessor);
+        `;
+        const moduleUrl = `data:application/javascript;charset=utf-8,${encodeURIComponent(workletCode)}`;
+        await audioContext.audioWorklet.addModule(moduleUrl);
+        const node = new AudioWorkletNode(audioContext, 'pcm-processor');
+        node.port.onmessage = (event) => {
+          this.sendFrame(event.data);
+        };
+        source.connect(node);
+        node.connect(gain);
+        gain.connect(audioContext.destination);
+        this.processor = node;
         return;
+      } catch (err) {
+        console.warn('AudioWorklet setup failed, falling back to ScriptProcessor:', err);
       }
-      if (this.reconnects < MAX_RECONNECTS) {
-        this.reconnects += 1;
-        this.onStatus('connecting', `Reconnecting (${this.reconnects}/${MAX_RECONNECTS})…`);
-        setTimeout(() => !this.stopped && this.connect(), 1000 * this.reconnects);
+    }
+
+    const processor = audioContext.createScriptProcessor(4096, 2, 1);
+    processor.onaudioprocess = (event) => {
+      const input = event.inputBuffer;
+      const mono = new Float32Array(input.length);
+      for (let channel = 0; channel < input.numberOfChannels; channel += 1) {
+        const samples = input.getChannelData(channel);
+        for (let i = 0; i < samples.length; i += 1) {
+          mono[i] += samples[i] / input.numberOfChannels;
+        }
+      }
+      this.sendFrame(float32ToInt16(mono));
+    };
+    source.connect(processor);
+    processor.connect(gain);
+    gain.connect(audioContext.destination);
+    this.processor = processor;
+  }
+
+  sendFrame(frame) {
+    if (!this.recording || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!frame || frame.length === 0) return;
+
+    const view = new DataView(new ArrayBuffer(frame.byteLength));
+    const int16 = frame instanceof Int16Array ? frame : new Int16Array(frame.buffer, frame.byteOffset, frame.length);
+    for (let i = 0; i < int16.length; i += 1) {
+      view.setInt16(i * 2, int16[i], true);
+    }
+    this.ws.send(view.buffer);
+  }
+
+  teardown() {
+    this.recording = false;
+    if (this.processor) {
+      if (typeof this.processor.port !== 'undefined') {
+        this.processor.port.onmessage = null;
       } else {
-        this.onStatus('error', `Connection lost (${event.code}).`);
+        this.processor.onaudioprocess = null;
       }
-    };
-  }
-
-  startRecorder() {
-    const mimeType = 'audio/webm;codecs=opus';
-    this.recorder = new MediaRecorder(this.audioStream, { mimeType });
-    this.recorder.ondataavailable = (e) => {
-      if (this.audioActive && e.data.size > 0 && this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(e.data);
+      if (typeof this.processor.disconnect === 'function') {
+        this.processor.disconnect();
       }
-    };
-    this.recorder.start(CHUNK_MS);
-  }
-
-  teardownConnection() {
-    clearInterval(this.keepAlive);
-    if (this.recorder && this.recorder.state !== 'inactive') this.recorder.stop();
-    this.recorder = null;
+      this.processor = null;
+    }
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close().catch(() => {});
+    }
+    this.audioContext = null;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.close();
+    }
+    this.ws = null;
   }
 
   stop() {
-    this.stopped = true;
-    this.teardownConnection();
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'CloseStream' }));
-      this.ws.close(1000);
-    }
-    this.ws = null;
+    this.teardown();
   }
 }
