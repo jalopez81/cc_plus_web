@@ -26,11 +26,20 @@ export class DeepgramStream {
     this.onStatus = onStatus;
     this.reconnects = 0;
     this.stopped = false;
+    this.audioActive = false;
   }
 
   start(audioStream) {
     this.audioStream = audioStream;
     this.connect();
+  }
+
+  setAudioActive(active) {
+    if (this.audioActive === active) return;
+    this.audioActive = active;
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.onStatus(active ? 'live' : 'idle', active ? 'Listening' : 'Silent · waiting for audio');
+    }
   }
 
   connect() {
@@ -50,7 +59,10 @@ export class DeepgramStream {
 
     ws.onopen = () => {
       this.reconnects = 0;
-      this.onStatus('live', 'Listening');
+      this.onStatus(
+        this.audioActive ? 'live' : 'idle',
+        this.audioActive ? 'Listening' : 'Silent · waiting for audio'
+      );
       this.startRecorder();
       this.keepAlive = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'KeepAlive' }));
@@ -105,7 +117,9 @@ export class DeepgramStream {
     const mimeType = 'audio/webm;codecs=opus';
     this.recorder = new MediaRecorder(this.audioStream, { mimeType });
     this.recorder.ondataavailable = (e) => {
-      if (e.data.size > 0 && this.ws?.readyState === WebSocket.OPEN) this.ws.send(e.data);
+      if (this.audioActive && e.data.size > 0 && this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(e.data);
+      }
     };
     this.recorder.start(CHUNK_MS);
   }

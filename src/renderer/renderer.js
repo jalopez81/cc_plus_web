@@ -1,13 +1,17 @@
 import { DeepgramStream } from './deepgram.js';
+import './interpreter.js';
 
 const MAX_BLOCKS = 200;
 const SILENCE_WARNING_MS = 8000;
+const AUDIO_ACTIVITY_THRESHOLD = 0.01;
+const SILENCE_WINDOW_MS = 1800;
+const AUDIO_CHECK_INTERVAL_MS = 100;
 const HOLD_TIME_MS = 15 * 60 * 1000;
 const HOLD_WARNING_MS = 2 * 60 * 1000;
 const FONT_MIN = 16;
 const FONT_MAX = 48;
 const SPEAKER_LABELS = { en: 'Cliente · EN', es: 'LEP · ES' };
-const SPEAKER_FLAGS = { en: '🇬🇧', es: '🇪🇸' };
+const SPEAKER_FLAGS = { en: 'flags/gb.svg', es: 'flags/es.svg' };
 const SHORTCUT_MODIFIERS = /Mac/i.test(navigator.platform) ? '⌘⇧' : 'Ctrl+Shift+';
 
 const $ = (id) => document.getElementById(id);
@@ -37,6 +41,7 @@ function setStatus(state, text) {
 }
 
 const bgColorInput = $('bgColorInput');
+const randomizeBgBtn = $('randomizeBgBtn');
 const bgOpacityInput = $('bgOpacityInput');
 const bgOpacityValue = $('bgOpacityValue');
 
@@ -133,9 +138,12 @@ function createBlock(lang) {
   el.className = 'cap interim';
   el.dataset.lang = baseLang(lang);
   el.innerHTML =
-    '<span class="time"></span><div class="src"><span class="flag"></span><span class="lang"></span><span class="text"></span></div><div class="tr"></div>';
+    '<span class="time"></span><div class="src"><img class="flag" alt="" /><span class="lang"></span><span class="text"></span></div><div class="tr"></div>';
   el.querySelector('.time').textContent = formatTime(new Date());
-  el.querySelector('.flag').textContent = SPEAKER_FLAGS[baseLang(lang)] ?? '';
+  const flag = el.querySelector('.flag');
+  const flagSrc = SPEAKER_FLAGS[baseLang(lang)];
+  if (flagSrc) flag.src = flagSrc;
+  else flag.hidden = true;
   el.querySelector('.lang').textContent = SPEAKER_LABELS[baseLang(lang)] ?? baseLang(lang).toUpperCase();
   captionsEl.appendChild(el);
   while (captionsEl.querySelectorAll('.cap').length > MAX_BLOCKS) {
@@ -283,7 +291,7 @@ async function translateSegment(block, seg) {
 function handleTranscript({ text, isFinal, speechFinal, language }) {
   const lang = baseLang(language);
   if (text) resetHoldTimer();
-  if (text && currentBlock && currentBlock.segments.length > 0 && currentBlock.lang !== lang) {
+  if (text && currentBlock && currentBlock.lang !== lang) {
     commitBlock();
   }
   if (text && !currentBlock) currentBlock = createBlock(lang);
@@ -297,15 +305,16 @@ function handleTranscript({ text, isFinal, speechFinal, language }) {
       translateSegment(currentBlock, seg);
     }
     renderBlock(currentBlock);
-    if (speechFinal) commitBlock();
+    if (speechFinal) currentBlock.el.classList.remove('interim');
   } else {
     currentBlock.interim = text;
+    currentBlock.el.classList.add('interim');
     renderBlock(currentBlock);
   }
 }
 
 function handleUtteranceEnd() {
-  if (currentBlock && !currentBlock.interim) commitBlock();
+  if (currentBlock && !currentBlock.interim) currentBlock.el.classList.remove('interim');
 }
 
 function clearCaptions() {
@@ -330,31 +339,53 @@ async function captureSystemAudio() {
   }
 }
 
-function watchForSilence(audioStream) {
+function watchForSilence(audioStream, deepgram) {
   const ctx = new AudioContext();
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 2048;
-  ctx.createMediaStreamSource(audioStream).connect(analyser);
+  const source = ctx.createMediaStreamSource(audioStream);
+  source.connect(analyser);
   const buf = new Float32Array(analyser.fftSize);
   const startedAt = Date.now();
-  let heardAudio = false;
+  let lastActivityAt = null;
+  let audioActive = false;
+  let hasHeardAudio = false;
+  let warnedAboutMissingAudio = false;
+
+  ctx.resume().catch((err) => console.error('Failed to resume audio activity detection:', err));
 
   const timer = setInterval(() => {
     analyser.getFloatTimeDomainData(buf);
-    if (buf.some((v) => Math.abs(v) > 0.0005)) heardAudio = true;
-    if (heardAudio) {
-      clearInterval(timer);
-    } else if (Date.now() - startedAt > SILENCE_WARNING_MS) {
-      clearInterval(timer);
+    let sumSquares = 0;
+    for (const sample of buf) sumSquares += sample * sample;
+    const rms = Math.sqrt(sumSquares / buf.length);
+    const now = Date.now();
+
+    if (rms >= AUDIO_ACTIVITY_THRESHOLD) {
+      lastActivityAt = now;
+      hasHeardAudio = true;
+      if (!audioActive) {
+        audioActive = true;
+        deepgram.setAudioActive(true);
+      }
+    } else if (audioActive && now - lastActivityAt >= SILENCE_WINDOW_MS) {
+      audioActive = false;
+      deepgram.setAudioActive(false);
+    }
+
+    if (!hasHeardAudio && !warnedAboutMissingAudio && now - startedAt >= SILENCE_WARNING_MS) {
+      warnedAboutMissingAudio = true;
       setStatus(
         'connecting',
         'No audio yet. Play something, or check that this app is allowed to capture system audio.'
       );
     }
-  }, 250);
+  }, AUDIO_CHECK_INTERVAL_MS);
 
   return () => {
     clearInterval(timer);
+    source.disconnect();
+    analyser.disconnect();
     ctx.close();
   };
 }
@@ -395,7 +426,7 @@ async function start() {
     },
   });
 
-  session = { stream, deepgram, stopSilenceWatch: watchForSilence(audioStream) };
+  session = { stream, deepgram, stopSilenceWatch: watchForSilence(audioStream, deepgram) };
   audioTracks[0].addEventListener('ended', () => stop());
   deepgram.start(audioStream);
   resetHoldTimer();
@@ -543,11 +574,29 @@ async function saveBackground() {
   settings = await window.captioner.setSettings({ bgColor: settings.bgColor, bgOpacity: settings.bgOpacity });
 }
 
+function randomDarkColor() {
+  const channel = () => Math.floor(Math.random() * 72 + 24).toString(16).padStart(2, '0');
+  return `#${channel()}${channel()}${channel()}`;
+}
+
+async function randomizeBackground() {
+  settings = { ...settings, bgColor: randomDarkColor() };
+  applyAppearance();
+  if (!settingsPanel.hidden) form.bgColor.value = settings.bgColor;
+  settings = await window.captioner.setSettings({ bgColor: settings.bgColor });
+}
+
+let backgroundChangePromise = Promise.resolve();
+randomizeBgBtn.addEventListener('click', () => {
+  backgroundChangePromise = randomizeBackground();
+});
+
 for (const input of [bgColorInput, bgOpacityInput]) {
   input.addEventListener('input', previewBackground);
   input.addEventListener('change', saveBackground);
 }
 
-applyAppearance();
+randomizeBgBtn.click();
+await backgroundChangePromise;
 renderHoldTimer();
 overlay.classList.add('idle');

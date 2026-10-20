@@ -26,7 +26,7 @@ const DEFAULT_SETTINGS = {
 };
 
 const MIN_WIDTH = 420;
-const MIN_HEIGHT = 140;
+const MIN_HEIGHT = 360;
 const COLLAPSED_HEIGHT = 56;
 
 let win;
@@ -78,25 +78,26 @@ function saveSettings(settings) {
 
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
-  const width = Math.min(960, workArea.width - 80);
-  const height = 280;
+  const width = Math.min(workArea.width, Math.max(MIN_WIDTH, Math.round(workArea.width / 3)));
+  const height = workArea.height;
 
   win = new BrowserWindow({
     width,
     height,
-    x: Math.round(workArea.x + (workArea.width - width) / 2),
-    y: Math.round(workArea.y + workArea.height - height - 40),
-    minWidth: MIN_WIDTH,
-    minHeight: MIN_HEIGHT,
-    transparent: true,
-    frame: false,
+    x: Math.round(workArea.x + workArea.width - width),
+    y: workArea.y,
+    minWidth: Math.min(MIN_WIDTH, workArea.width),
+    minHeight: Math.min(MIN_HEIGHT, workArea.height),
+    transparent: false,
+    frame: true,
     resizable: true,
-    alwaysOnTop: true,
-    hasShadow: false,
+    alwaysOnTop: false,
+    hasShadow: true,
     fullscreenable: false,
-    skipTaskbar: true,
+    skipTaskbar: false,
     acceptFirstMouse: true,
-    backgroundColor: '#00000000',
+    backgroundColor: '#14161e',
+    ...(process.platform === 'win32' && { icon: path.join(__dirname, '..', 'favicon.ico') }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -105,8 +106,6 @@ function createWindow() {
     },
   });
 
-  win.setAlwaysOnTop(true, 'floating');
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 

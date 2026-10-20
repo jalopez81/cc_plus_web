@@ -1,6 +1,6 @@
 # Live Captioner
 
-A transparent, always-on-top desktop overlay that captions whatever your computer is playing (a browser tab, Zoom, a livestream) in real time, with English ⇄ Spanish translation. No virtual audio driver required.
+A resizable desktop window that captions whatever your computer is playing (a browser tab, Zoom, a livestream) in real time, with English ⇄ Spanish translation and built-in interpreter tools. No virtual audio driver required.
 
 ## Requirements
 
@@ -21,6 +21,10 @@ On first launch, open **⚙ Settings**, paste your Deepgram key, and press **Sta
 
 On macOS, the system asks for permission to capture system audio; allow it. If captions never appear and the status says "No audio yet", check **System Settings › Privacy & Security › Screen & System Audio Recording**. In development, the app requesting permission may be your terminal or editor rather than "Live Captioner". Windows needs no permission prompt.
 
+## Interpreter tools
+
+The app opens as a tall, right-aligned window occupying about one third of the primary display. Use the **Saludos**, **Intervenciones**, and **Solicitudes** buttons to open categorized soundbytes. Interpreter name/ID and a small call-notes field appear above the transcript. Soundbytes and notes can be customized and are saved locally. The hold timer remains in the transcription toolbar.
+
 ## Using it
 
 Shortcuts use **Ctrl+Shift** on Windows and **⌘⇧** on macOS.
@@ -30,12 +34,10 @@ Shortcuts use **Ctrl+Shift** on Windows and **⌘⇧** on macOS.
 | Source dropdown | **Auto** detects English/Spanish per sentence (Deepgram `multi`); or pin the source to English or Spanish for better accuracy |
 | Start / Stop | Begin or end capturing system audio |
 | Pin / Ctrl+Shift+L | Toggle click-through so the overlay ignores the mouse |
-| Ctrl+Shift+K | Show / hide the overlay |
+| Ctrl+Shift+K | Show / hide the window |
 | Translator dropdown | Switch translation service on the fly (see below) |
 | Background / Opacity (second toolbar row) | Pick the window color and transparency; text switches to dark on light colors |
-| Drag the toolbar | Move the window; resize from the edges |
-
-The toolbar fades out while captioning and reappears on hover.
+| Native title bar | Move, minimize, maximize, close, and resize the window |
 
 **Translation providers** (toolbar dropdown or Settings):
 - **Auto**: tries DeepL (if a key is set), then Google, MyMemory, and Apertium, using the first that succeeds. A service that fails is skipped for 5 minutes, or 1 hour if it reports its quota is used up. The status bar shows which service is translating.
