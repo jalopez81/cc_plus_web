@@ -12,61 +12,92 @@
   </head>
   <body>
     <div class="overlay" id="overlay">
+      <header class="toolbar">
+        <div class="toolbar-row titlebar">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="status">
+            <span class="hold-timer" id="holdTimer" title="Hold time: resets on every new message">15:00</span>
+            <span class="status-indicator">
+              <span class="dot" id="statusDot"></span>
+              <span id="statusText">Idle</span>
+            </span>
+          </div>
+          <div class="controls">
+            <button id="toggleBtn" class="primary start" title="Capture system audio">Start</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="settings" id="settings" aria-label="Configuración">
+        <button class="cfgbar" id="settingsBtn" type="button" aria-expanded="true">
+          <span class="cfg-label">ENGINES</span>
+          <span class="cfg-summary" id="settingsSummary">Whisper · Off</span>
+          <span class="cfg-chevron" aria-hidden="true">▾</span>
+        </button>
+        <div class="settings-content expanded" id="settingsContent" aria-hidden="false">
+          <form id="settingsForm">
+            <div class="engine-row">
+              <label class="engine-select-label">
+                <span class="sr-only">Transcription engine</span>
+                <select name="transcriptionEngine" aria-label="Transcription engine">
+                  <option value="whisper">Whisper</option>
+                  <option value="deepgram">Deepgram</option>
+                </select>
+              </label>
+              <label class="engine-input-label" data-engine-for="whisper">
+                <span class="sr-only">Transcription WebSocket URL</span>
+                <input type="url" name="transcriptionUrl" autocomplete="off" placeholder="wss://.../ws/transcribe" />
+              </label>
+              <label class="engine-input-label" data-engine-for="deepgram">
+                <span class="sr-only">Deepgram API key</span>
+                <input type="password" name="deepgramKey" autocomplete="off" placeholder="Deepgram API key" />
+              </label>
+            </div>
+            <div class="engine-row">
+              <label class="engine-select-label">
+                <span class="sr-only">Translation engine</span>
+                <select name="translator">
+                  <option value="auto">Auto</option>
+                  <option value="deepl">DeepL</option>
+                  <option value="google">Google</option>
+                  <option value="mymemory">MyMemory</option>
+                  <option value="apertium">Apertium</option>
+                  <option value="off">Off</option>
+                </select>
+              </label>
+              <label class="engine-input-label" data-for="deepl">
+                <span class="sr-only">DeepL API key</span>
+                <input type="password" name="deeplKey" autocomplete="off" placeholder="DeepL API key" />
+              </label>
+              <label class="engine-input-label" data-for="mymemory auto">
+                <span class="sr-only">MyMemory email (optional)</span>
+                <input type="email" name="myMemoryEmail" autocomplete="off" placeholder="MyMemory email (optional)" />
+              </label>
+            </div>
+            <div class="settings-actions">
+              <button type="submit" class="primary">Done</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="call-tools" aria-label="Notas de la llamada">
+        <label class="sr-only" for="callNotes">Notas rápidas</label>
+        <textarea id="callNotes" rows="1" spellcheck="true" placeholder="Notas rápidas de la llamada…"></textarea>
+        <div class="notes-actions">
+          <button type="button" id="copyNotes" title="Copiar notas" aria-label="Copiar notas">Copiar</button>
+          <button type="button" id="clearNotes" title="Limpiar notas" aria-label="Limpiar notas">Limpiar</button>
+        </div>
+        <span class="sr-only" id="notesSaveStatus" role="status">Guardado automáticamente</span>
+      </section>
+
       <main class="captions" id="captions">
         <p class="placeholder" id="placeholder">
           Presiona <strong>Iniciar</strong> para transcribir el audio del sistema.
         </p>
       </main>
 
-      <header class="toolbar">
-        <div class="toolbar-row">
-          <div class="status">
-            <span class="hold-timer" id="holdTimer" title="Hold time: resets on every new message">15:00</span>
-            <span class="dot" id="statusDot"></span>
-            <span id="statusText">Idle</span>
-          </div>
-          <div class="controls">
-            <select id="sourceMode" title="Source language">
-              <option value="auto">Auto EN ⇄ ES</option>
-              <option value="en">English → Español</option>
-              <option value="es">Español → English</option>
-            </select>
-            <select id="translatorSelect" title="Translation service">
-              <option value="auto">Auto</option>
-              <option value="deepl">DeepL</option>
-              <option value="google">Google</option>
-              <option value="mymemory">MyMemory</option>
-              <option value="apertium">Apertium</option>
-              <option value="off">No translation</option>
-            </select>
-            <button id="toggleBtn" class="primary" title="Capture system audio">Start</button>
-            <button id="clearBtn" title="Clear captions">Clear</button>
-            <button id="fontDownBtn" title="Smaller text">A−</button>
-            <button id="fontUpBtn" title="Larger text">A+</button>
-            <button id="clickThroughBtn">Pin</button>
-            <button id="settingsBtn" title="Settings">⚙</button>
-            <button id="collapseBtn" title="Collapse">▼</button>
-            <button id="closeBtn" title="Quit">✕</button>
-          </div>
-        </div>
-        <div class="toolbar-row appearance-row">
-          <div class="appearance">
-            <label class="background-picker" title="Choose the window background color">
-              <span aria-hidden="true">BG</span>
-              <input type="color" id="bgColorInput" />
-            </label>
-            <button id="randomizeBgBtn" title="Choose a random dark background color">Random dark BG</button>
-            <label title="Background opacity (0% is fully transparent)">
-              Opacity
-              <input type="range" id="bgOpacityInput" min="0" max="1" step="0.02" />
-              <output id="bgOpacityValue"></output>
-            </label>
-          </div>
-        </div>
-      </header>
-
       <nav class="interpreter-tools" aria-label="Herramientas de interpretación">
-        <span class="tool-label">FRASES</span>
         <button type="button" data-category="Saludos y cierres">Saludos</button>
         <button type="button" data-category="Intervenciones y espera">Intervenciones</button>
         <button type="button" data-category="Solicitudes y cierres">Solicitudes</button>
@@ -80,19 +111,6 @@
           </div>
           <button type="button" class="popover-close" data-close-popover aria-label="Cerrar">✕</button>
         </header>
-        <label class="soundbyte-search">
-          <span class="sr-only">Buscar frase</span>
-          <input id="soundbyteSearch" type="search" placeholder="Buscar frase…" />
-        </label>
-        <div class="soundbyte-list" id="soundbyteList" aria-live="polite"></div>
-        <p class="popover-empty" id="soundbyteEmpty" hidden>No hay frases en esta categoría.</p>
-        <footer class="popover-footer">
-          <button type="button" id="addSoundbyte">＋ Agregar</button>
-          <button type="button" id="restoreSoundbytes">Restaurar iniciales</button>
-        </footer>
-      </section>
-
-      <section class="call-tools" aria-label="Datos del intérprete y notas">
         <div class="interpreter-profile">
           <label>Nombre
             <input id="interpreterName" type="text" autocomplete="name" placeholder="Tu nombre" />
@@ -101,20 +119,15 @@
             <input id="interpreterId" type="text" placeholder="Tu ID" />
           </label>
         </div>
-        <div class="call-notes-row">
-          <label class="sr-only" for="callNotes">Notas rápidas</label>
-          <textarea id="callNotes" spellcheck="true" placeholder="Notas rápidas de la llamada…"></textarea>
-          <div class="notes-actions">
-          <div class="font-controls">
-            <button type="button" id="notesFontDown" aria-label="Reducir texto">A−</button>
-            <output id="notesFontSize">16 px</output>
-            <button type="button" id="notesFontUp" aria-label="Aumentar texto">A+</button>
-          </div>
-          <button type="button" id="copyNotes">Copiar</button>
-          <button type="button" id="clearNotes">Limpiar</button>
-          </div>
-        </div>
-        <p class="autosave-note" id="notesSaveStatus" role="status">Guardado automáticamente</p>
+        <label class="soundbyte-search">
+          <span class="sr-only">Buscar frase</span>
+          <input id="soundbyteSearch" type="search" placeholder="Buscar frase…" />
+        </label>
+        <div class="soundbyte-list" id="soundbyteList" aria-live="polite"></div>
+        <p class="popover-empty" id="soundbyteEmpty" hidden>No hay frases en esta categoría.</p>
+        <footer class="popover-footer">
+          <button type="button" id="addSoundbyte">＋ Agregar</button>
+        </footer>
       </section>
 
       <dialog id="soundbyteDialog">
@@ -158,53 +171,25 @@
 
       <div class="tool-toast" id="toolToast" role="status" aria-live="polite"></div>
 
-      <section class="settings" id="settings" hidden>
-        <form id="settingsForm">
-          <label>
-            Transcription WebSocket URL
-            <input type="url" name="transcriptionUrl" autocomplete="off" placeholder="wss://.../ws/transcribe" />
-          </label>
-          <label>
-            Translator
-            <select name="translator">
-              <option value="auto">Auto (try each service until one works)</option>
-              <option value="deepl">DeepL (free API key)</option>
-              <option value="google">Google (free, no key)</option>
-              <option value="mymemory">MyMemory (free, no key)</option>
-              <option value="apertium">Apertium (free, no key, lower quality)</option>
-              <option value="off">Off (transcribe only)</option>
-            </select>
-          </label>
-          <label data-for="mymemory auto">
-            MyMemory email (optional, raises free quota)
-            <input type="email" name="myMemoryEmail" autocomplete="off" />
-          </label>
-          <label data-for="deepl auto">
-            DeepL API key (Auto tries DeepL first when set)
-            <input type="password" name="deeplKey" autocomplete="off" />
-          </label>
-          <div class="row">
-            <label>
-              Font size
-              <input type="range" name="fontSize" min="16" max="48" step="1" />
-            </label>
-            <label>
-              Background opacity
-              <input type="range" name="bgOpacity" min="0" max="1" step="0.02" />
-            </label>
-            <label>
-              Background color
-              <input type="color" name="bgColor" />
-            </label>
-          </div>
-          <label class="checkbox">
-            <input type="checkbox" name="showOriginal" /> Show original transcript above translation
-          </label>
-          <div class="actions">
-            <button type="submit" class="primary">Done</button>
-          </div>
-        </form>
-      </section>
+      <footer class="bottom-toolbar" aria-label="Transcript controls">
+        <label class="background-picker" title="Choose background color" aria-label="Choose background color">
+          <input type="color" id="bgColorInput" />
+        </label>
+        <label class="visibility-toggle">
+          <input type="checkbox" id="showTranscriptionToggle" />
+          <span class="checkmark" aria-hidden="true"></span>
+          <span>Transcription</span>
+        </label>
+        <label class="visibility-toggle">
+          <input type="checkbox" id="showTranslationToggle" />
+          <span class="checkmark" aria-hidden="true"></span>
+          <span>Translation</span>
+        </label>
+        <span class="toolbar-spacer"></span>
+        <button id="fontDownBtn" title="Smaller text" aria-label="Smaller text">−</button>
+        <button id="fontUpBtn" title="Larger text" aria-label="Larger text">+</button>
+        <button id="clearBtn" title="Clear captions" aria-label="Clear captions">Clear</button>
+      </footer>
     </div>
     <script type="module" src="renderer.js"></script>
   </body>

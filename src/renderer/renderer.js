@@ -1,4 +1,5 @@
-import { TranscriptionStream } from './deepgram.js';
+import { DeepgramStream } from './deepgram.js';
+import { WhisperStream } from './whisper.js';
 import './interpreter.js';
 
 const MAX_BLOCKS = 200;
@@ -8,7 +9,6 @@ const FONT_MIN = 16;
 const FONT_MAX = 48;
 const SPEAKER_LABELS = { en: 'Cliente · EN', es: 'LEP · ES' };
 const SPEAKER_FLAGS = { en: 'flags/gb.svg', es: 'flags/es.svg' };
-const SHORTCUT_MODIFIERS = /Mac/i.test(navigator.platform) ? '⌘⇧' : 'Ctrl+Shift+';
 
 const $ = (id) => document.getElementById(id);
 const overlay = $('overlay');
@@ -17,12 +17,18 @@ const placeholder = $('placeholder');
 const statusDot = $('statusDot');
 const statusText = $('statusText');
 const toggleBtn = $('toggleBtn');
-const sourceModeEl = $('sourceMode');
-const settingsPanel = $('settings');
 const form = $('settingsForm');
-const clickThroughBtn = $('clickThroughBtn');
+const settingsBtn = $('settingsBtn');
+const settingsSummary = $('settingsSummary');
+const settingsContent = $('settingsContent');
+const showTranscriptionToggle = $('showTranscriptionToggle');
+const showTranslationToggle = $('showTranslationToggle');
 
 let settings = await window.captioner.getSettings();
+settings.transcriptionEngine ??= 'whisper';
+settings.deepgramKey ??= '';
+settings.showTranscription = settings.showTranscription ?? settings.showOriginal ?? true;
+settings.showTranslation = settings.showTranslation ?? true;
 let session = null;
 let captureStarting = false;
 let currentBlock = null;
@@ -38,35 +44,39 @@ function setStatus(state, text) {
 }
 
 const bgColorInput = $('bgColorInput');
-const randomizeBgBtn = $('randomizeBgBtn');
-const bgOpacityInput = $('bgOpacityInput');
-const bgOpacityValue = $('bgOpacityValue');
 
 const hexToRgb = (hex) => hex.match(/[0-9a-f]{2}/gi).map((h) => parseInt(h, 16));
 
-// Below this opacity the desktop behind the window dominates, so keep light text with a shadow.
-const LIGHT_TEXT_MAX_OPACITY = 0.4;
-
-function isLightBackground(rgb, opacity) {
+function isLightBackground(rgb) {
   const [r, g, b] = rgb.map((c) => {
     const v = c / 255;
     return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
   });
-  return opacity >= LIGHT_TEXT_MAX_OPACITY && 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4;
 }
 
 function applyAppearance() {
   const root = document.documentElement.style;
   const rgb = hexToRgb(settings.bgColor);
   root.setProperty('--font-size', `${settings.fontSize}px`);
-  root.setProperty('--bg-alpha', String(settings.bgOpacity));
+  root.setProperty('--bg-alpha', '1');
   root.setProperty('--bg-rgb', rgb.join(', '));
-  document.body.classList.toggle('light-bg', isLightBackground(rgb, settings.bgOpacity));
-  document.body.classList.toggle('hide-original', !settings.showOriginal);
-  document.body.classList.toggle('no-translation', settings.translator === 'off');
+  document.body.classList.toggle('light-bg', isLightBackground(rgb));
+  document.body.classList.toggle('hide-transcription', !settings.showTranscription);
+  document.body.classList.toggle('hide-translation', !settings.showTranslation);
   bgColorInput.value = settings.bgColor;
-  bgOpacityInput.value = settings.bgOpacity;
-  bgOpacityValue.textContent = `${Math.round(settings.bgOpacity * 100)}%`;
+  const translatorNames = {
+    auto: 'Auto',
+    deepl: 'DeepL',
+    google: 'Google',
+    mymemory: 'MyMemory',
+    apertium: 'Apertium',
+    off: 'Off',
+  };
+  const transcriptionName = settings.transcriptionEngine === 'deepgram' ? 'Deepgram' : 'Whisper';
+  settingsSummary.textContent = `${transcriptionName} · ${translatorNames[settings.translator] ?? 'Auto'}`;
+  showTranscriptionToggle.checked = settings.showTranscription;
+  showTranslationToggle.checked = settings.showTranslation;
 }
 
 // ---------- hold timer ----------
@@ -166,7 +176,7 @@ const splitSentences = (text) =>
     .map((s) => s.trim())
     .filter(Boolean);
 
-// Translations arrive per Deepgram segment, so sentences pair 1:1 only when both sides split into
+// Translations arrive per transcription segment, so sentences pair 1:1 only when both sides split into
 // the same count; otherwise the whole segment is one pair rather than risk mismatched siblings.
 function pairSegment(blockId, index, seg) {
   const src = splitSentences(seg.src);
@@ -322,6 +332,29 @@ function handleTranscript({ text, language, translation }) {
   if (seg.tr === undefined) void translateSegment(currentBlock, seg);
 }
 
+function handleDeepgramTranscript({ text, language, isFinal, speechFinal }) {
+  const transcript = String(text ?? '').trim();
+  if (!transcript) {
+    if (speechFinal) commitBlock();
+    return;
+  }
+  const lang = baseLang(language);
+  if (currentBlock && currentBlock.lang !== lang) commitBlock();
+  if (!currentBlock) currentBlock = createBlock(lang);
+
+  if (isFinal) {
+    const seg = { src: transcript, tr: settings.translator === 'off' ? '' : undefined };
+    currentBlock.segments.push(seg);
+    currentBlock.interim = '';
+    renderBlock(currentBlock);
+    if (seg.tr === undefined) void translateSegment(currentBlock, seg);
+    if (speechFinal) commitBlock();
+  } else {
+    currentBlock.interim = transcript;
+    renderBlock(currentBlock);
+  }
+}
+
 function handleUtteranceEnd() {
   if (currentBlock && !currentBlock.interim) currentBlock.el.classList.remove('interim');
 }
@@ -354,20 +387,30 @@ async function start() {
   captureStarting = true;
   toggleBtn.disabled = true;
 
-  if (!settings.transcriptionUrl) {
+  if (settings.transcriptionEngine === 'deepgram' && !settings.deepgramKey) {
     openSettings();
-    form.transcriptionUrl.focus();
-    setStatus('error', 'Add the transcription WebSocket URL to start.');
+    form.deepgramKey.focus();
+    setStatus('error', 'Add a Deepgram API key in Engines settings to start.');
     captureStarting = false;
     toggleBtn.disabled = false;
     return;
   }
 
-  if (!settings.transcriptionUrl.startsWith('wss://')) {
-    setStatus('error', 'The transcription server URL must start with wss://.');
-    captureStarting = false;
-    toggleBtn.disabled = false;
-    return;
+  if (settings.transcriptionEngine !== 'deepgram') {
+    if (!settings.transcriptionUrl) {
+      openSettings();
+      form.transcriptionUrl.focus();
+      setStatus('error', 'Add the Whisper WebSocket URL in Engines settings.');
+      captureStarting = false;
+      toggleBtn.disabled = false;
+      return;
+    }
+    if (!settings.transcriptionUrl.startsWith('wss://')) {
+      setStatus('error', 'The Whisper transcription URL must start with wss://.');
+      captureStarting = false;
+      toggleBtn.disabled = false;
+      return;
+    }
   }
 
   setStatus('connecting', 'Requesting computer audio capture…');
@@ -382,21 +425,30 @@ async function start() {
     }
 
     const audioStream = new MediaStream(audioTracks);
-    const transcription = new TranscriptionStream({
-      url: settings.transcriptionUrl,
-      onTranscript: handleTranscript,
-      onStatus: (state, text) => {
-        if (state === 'disconnected') {
-          if (session?.transcription === transcription) {
-            stop({ keepStatus: true });
-            setStatus('idle', text);
-          }
-          return;
+    const onStatus = (state, text) => {
+      if (state === 'disconnected') {
+        if (session?.transcription === transcription) {
+          stop({ keepStatus: true });
+          setStatus('idle', text);
         }
-        setStatus(state, text);
-        if (state === 'error') stop({ keepStatus: true });
-      },
-    });
+        return;
+      }
+      setStatus(state, text);
+      if (state === 'error') stop({ keepStatus: true });
+    };
+    const transcription =
+      settings.transcriptionEngine === 'deepgram'
+        ? new DeepgramStream({
+            apiKey: settings.deepgramKey,
+            onTranscript: handleDeepgramTranscript,
+            onUtteranceEnd: handleUtteranceEnd,
+            onStatus,
+          })
+        : new WhisperStream({
+            url: settings.transcriptionUrl,
+            onTranscript: handleTranscript,
+            onStatus,
+          });
 
     session = { stream, transcription };
     audioTracks[0].addEventListener('ended', () => stop());
@@ -441,66 +493,71 @@ function syncTranslatorFields() {
   for (const el of form.querySelectorAll('[data-for]')) {
     el.hidden = !el.dataset.for.split(' ').includes(form.translator.value);
   }
+  for (const el of form.querySelectorAll('[data-engine-for]')) {
+    el.hidden = !el.dataset.engineFor.split(' ').includes(form.transcriptionEngine.value);
+  }
 }
 
 function openSettings() {
+  form.transcriptionEngine.value = settings.transcriptionEngine;
   form.transcriptionUrl.value = settings.transcriptionUrl || '';
+  form.deepgramKey.value = settings.deepgramKey || '';
   form.translator.value = settings.translator;
   form.myMemoryEmail.value = settings.myMemoryEmail;
   form.deeplKey.value = settings.deeplKey;
-  form.fontSize.value = settings.fontSize;
-  form.bgOpacity.value = settings.bgOpacity;
-  form.bgColor.value = settings.bgColor;
-  form.showOriginal.checked = settings.showOriginal;
   syncTranslatorFields();
-  settingsPanel.hidden = false;
-  overlay.classList.add('settings-open');
+  form.inert = false;
+  settingsContent.classList.add('expanded');
+  settingsContent.setAttribute('aria-hidden', 'false');
+  settingsBtn.setAttribute('aria-expanded', 'true');
 }
 
 function readForm() {
   return {
+    transcriptionEngine: form.transcriptionEngine.value,
     transcriptionUrl: form.transcriptionUrl.value.trim(),
+    deepgramKey: form.deepgramKey.value.trim(),
     translator: form.translator.value,
     myMemoryEmail: form.myMemoryEmail.value.trim(),
     deeplKey: form.deeplKey.value.trim(),
-    fontSize: Number(form.fontSize.value),
-    bgOpacity: Number(form.bgOpacity.value),
-    bgColor: form.bgColor.value,
-    showOriginal: form.showOriginal.checked,
   };
 }
 
 form.addEventListener('input', () => {
   syncTranslatorFields();
-  settings = { ...settings, ...readForm() };
-  applyAppearance();
 });
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const urlChanged = form.transcriptionUrl.value.trim() !== (await window.captioner.getSettings()).transcriptionUrl;
-  settings = await window.captioner.setSettings(readForm());
-  applyAppearance();
-  translatorSelect.value = settings.translator;
-  settingsPanel.hidden = true;
-  overlay.classList.remove('settings-open');
-  if (urlChanged) await restartIfLive();
-  else if (!session) setStatus('idle', 'Idle');
+  const values = readForm();
+  try {
+    const previousSettings = await window.captioner.getSettings();
+    const previousEngine = previousSettings.transcriptionEngine || 'whisper';
+    const restartRequired =
+      values.transcriptionEngine !== previousEngine ||
+      (values.transcriptionEngine === 'whisper' &&
+        previousEngine === 'whisper' &&
+        values.transcriptionUrl !== previousSettings.transcriptionUrl) ||
+      (values.transcriptionEngine === 'deepgram' &&
+        previousEngine === 'deepgram' &&
+        values.deepgramKey !== previousSettings.deepgramKey);
+    settings = await window.captioner.setSettings(values);
+    applyAppearance();
+    form.inert = true;
+    settingsContent.classList.remove('expanded');
+    settingsContent.setAttribute('aria-hidden', 'true');
+    settingsBtn.setAttribute('aria-expanded', 'false');
+    if (restartRequired) await restartIfLive();
+    else if (!session) setStatus('idle', 'Idle');
+  } catch (err) {
+    setStatus('error', `Could not save settings: ${err.message || 'unknown error'}`);
+  }
 });
 
 // ---------- toolbar ----------
 
 toggleBtn.addEventListener('click', () => (session ? stop() : start()));
 $('clearBtn').addEventListener('click', clearCaptions);
-$('closeBtn').addEventListener('click', () => window.captioner.close());
-
-const collapseBtn = $('collapseBtn');
-collapseBtn.addEventListener('click', () => {
-  const collapsed = overlay.classList.toggle('collapsed');
-  collapseBtn.textContent = collapsed ? '▲' : '▼';
-  collapseBtn.title = collapsed ? 'Expand' : 'Collapse';
-  window.captioner.setCollapsed(collapsed);
-});
 
 async function changeFontSize(delta) {
   const fontSize = Math.min(FONT_MAX, Math.max(FONT_MIN, settings.fontSize + delta));
@@ -509,74 +566,51 @@ async function changeFontSize(delta) {
 }
 $('fontDownBtn').addEventListener('click', () => changeFontSize(-2));
 $('fontUpBtn').addEventListener('click', () => changeFontSize(2));
-$('settingsBtn').addEventListener('click', () => {
-  if (settingsPanel.hidden) openSettings();
-  else form.requestSubmit();
-});
-
-clickThroughBtn.title = `Click-through (${SHORTCUT_MODIFIERS}L)`;
-clickThroughBtn.addEventListener('click', () => window.captioner.setClickThrough(true));
-window.captioner.onClickThrough((enabled) => {
-  clickThroughBtn.classList.toggle('active', enabled);
-  if (enabled) setStatus(session ? 'live' : 'idle', `Click-through on · ${SHORTCUT_MODIFIERS}L to unlock`);
-  else setStatus(session ? 'live' : 'idle', session ? 'Listening' : 'Idle');
-});
-
-sourceModeEl.value = settings.sourceMode;
-sourceModeEl.addEventListener('change', async () => {
-  settings = await window.captioner.setSettings({ sourceMode: sourceModeEl.value });
-  await restartIfLive();
-});
-
-const translatorSelect = $('translatorSelect');
-translatorSelect.value = settings.translator;
-translatorSelect.addEventListener('change', async () => {
-  settings = await window.captioner.setSettings({ translator: translatorSelect.value });
-  lastProvider = null;
-  applyAppearance();
-  if (!settingsPanel.hidden) {
-    form.translator.value = settings.translator;
-    syncTranslatorFields();
+settingsBtn.addEventListener('click', () => {
+  if (form.inert) openSettings();
+  else {
+    form.inert = true;
+    settingsContent.classList.remove('expanded');
+    settingsContent.setAttribute('aria-hidden', 'true');
+    settingsBtn.setAttribute('aria-expanded', 'false');
   }
 });
+
+const translatorSelect = form.translator;
+translatorSelect.addEventListener('change', () => {
+  syncTranslatorFields();
+  lastProvider = null;
+});
+form.transcriptionEngine.addEventListener('change', syncTranslatorFields);
+
+async function saveVisibilitySettings() {
+  try {
+    settings = await window.captioner.setSettings({
+      showTranscription: showTranscriptionToggle.checked,
+      showTranslation: showTranslationToggle.checked,
+    });
+    applyAppearance();
+  } catch (err) {
+    setStatus('error', `Could not save display options: ${err.message || 'unknown error'}`);
+  }
+}
+
+showTranscriptionToggle.addEventListener('change', saveVisibilitySettings);
+showTranslationToggle.addEventListener('change', saveVisibilitySettings);
 
 function previewBackground() {
-  settings = { ...settings, bgColor: bgColorInput.value, bgOpacity: Number(bgOpacityInput.value) };
+  settings = { ...settings, bgColor: bgColorInput.value };
   applyAppearance();
-  if (!settingsPanel.hidden) {
-    form.bgColor.value = settings.bgColor;
-    form.bgOpacity.value = settings.bgOpacity;
-  }
 }
 
 async function saveBackground() {
   previewBackground();
-  settings = await window.captioner.setSettings({ bgColor: settings.bgColor, bgOpacity: settings.bgOpacity });
-}
-
-function randomDarkColor() {
-  const channel = () => Math.floor(Math.random() * 72 + 24).toString(16).padStart(2, '0');
-  return `#${channel()}${channel()}${channel()}`;
-}
-
-async function randomizeBackground() {
-  settings = { ...settings, bgColor: randomDarkColor() };
-  applyAppearance();
-  if (!settingsPanel.hidden) form.bgColor.value = settings.bgColor;
   settings = await window.captioner.setSettings({ bgColor: settings.bgColor });
 }
 
-let backgroundChangePromise = Promise.resolve();
-randomizeBgBtn.addEventListener('click', () => {
-  backgroundChangePromise = randomizeBackground();
-});
-
-for (const input of [bgColorInput, bgOpacityInput]) {
-  input.addEventListener('input', previewBackground);
-  input.addEventListener('change', saveBackground);
-}
-
-randomizeBgBtn.click();
-await backgroundChangePromise;
+bgColorInput.addEventListener('input', previewBackground);
+bgColorInput.addEventListener('change', saveBackground);
+openSettings();
+applyAppearance();
 renderHoldTimer();
 overlay.classList.add('idle');

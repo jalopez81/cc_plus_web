@@ -12,26 +12,26 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { translate } = require('./translate');
 
-const SECRET_KEYS = ['deeplKey'];
+const SECRET_KEYS = ['deeplKey', 'deepgramKey'];
 const DEFAULT_SETTINGS = {
+  transcriptionEngine: 'whisper',
   transcriptionUrl: process.env.CC_PLUS_TRANSCRIPTION_URL || '',
-  sourceMode: 'auto', // 'auto' (EN↔ES), 'en' (EN→ES), 'es' (ES→EN)
-  translator: 'off', // backend handles the translation, this remains for compatibility with the existing UI
+  deepgramKey: '',
+  translator: 'off',
   deeplKey: '',
   myMemoryEmail: '',
   fontSize: 26,
-  bgOpacity: 0.72,
-  bgColor: '#0e1016',
-  showOriginal: true,
+  bgColor: '#1c2740',
+  showTranscription: true,
+  showTranslation: true,
 };
 
 const MIN_WIDTH = 420;
 const MIN_HEIGHT = 360;
-const COLLAPSED_HEIGHT = 56;
+const APP_WIDTH = 452;
+const APP_HEIGHT = 720;
 
 let win;
-let clickThrough = false;
-let expandedHeight = null;
 let captureMode = 'window'; // 'window' grants our own window as the video track; 'screen' falls back to a display.
 
 const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
@@ -59,6 +59,11 @@ function loadSettings() {
     }
     delete stored[`${key}Encrypted`];
   }
+  if (!Object.hasOwn(stored, 'showTranscription') && Object.hasOwn(stored, 'showOriginal')) {
+    stored.showTranscription = stored.showOriginal;
+  }
+  delete stored.showOriginal;
+  delete stored.sourceMode;
   return { ...DEFAULT_SETTINGS, ...stored };
 }
 
@@ -78,14 +83,14 @@ function saveSettings(settings) {
 
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
-  const width = Math.min(workArea.width, Math.max(MIN_WIDTH, Math.round(workArea.width / 3)));
-  const height = workArea.height;
+  const width = Math.min(workArea.width, APP_WIDTH);
+  const height = Math.min(workArea.height, APP_HEIGHT);
 
   win = new BrowserWindow({
     width,
     height,
     x: Math.round(workArea.x + workArea.width - width),
-    y: workArea.y,
+    y: Math.round(workArea.y + (workArea.height - height) / 2),
     minWidth: Math.min(MIN_WIDTH, workArea.width),
     minHeight: Math.min(MIN_HEIGHT, workArea.height),
     transparent: false,
@@ -107,28 +112,6 @@ function createWindow() {
   });
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-}
-
-function setClickThrough(enabled) {
-  clickThrough = enabled;
-  win?.setIgnoreMouseEvents(enabled, { forward: true });
-  win?.webContents.send('window:click-through', enabled);
-}
-
-function setCollapsed(collapsed) {
-  if (!win) return;
-  const [width, height] = win.getSize();
-  if (collapsed && expandedHeight === null) {
-    expandedHeight = height;
-    win.setMinimumSize(MIN_WIDTH, COLLAPSED_HEIGHT);
-    win.setSize(width, COLLAPSED_HEIGHT);
-    win.setResizable(false);
-  } else if (!collapsed && expandedHeight !== null) {
-    win.setResizable(true);
-    win.setMinimumSize(MIN_WIDTH, MIN_HEIGHT);
-    win.setSize(width, expandedHeight);
-    expandedHeight = null;
-  }
 }
 
 function registerDisplayMediaHandler() {
@@ -163,8 +146,6 @@ function registerIpc() {
     captureMode = mode === 'screen' ? 'screen' : 'window';
   });
   ipcMain.on('window:close', () => app.quit());
-  ipcMain.on('window:collapse', (_e, collapsed) => setCollapsed(Boolean(collapsed)));
-  ipcMain.on('window:click-through', (_e, enabled) => setClickThrough(Boolean(enabled)));
 }
 
 app.whenReady().then(() => {
@@ -176,7 +157,6 @@ app.whenReady().then(() => {
   registerIpc();
   createWindow();
 
-  globalShortcut.register('CommandOrControl+Shift+L', () => setClickThrough(!clickThrough));
   globalShortcut.register('CommandOrControl+Shift+K', () => {
     if (!win) return;
     win.isVisible() ? win.hide() : win.showInactive();

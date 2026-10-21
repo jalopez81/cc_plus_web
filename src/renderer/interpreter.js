@@ -92,8 +92,6 @@ const DEFAULT_SOUNDBYTES = [
 ];
 
 const STORAGE_KEY = 'interpreter-toolkit-v1';
-const FONT_MIN = 12;
-const FONT_MAX = 28;
 const DEFAULT_SOUNDBYTE_COLOR = '#252832';
 const DEFAULT_CATEGORY = 'Saludos y cierres';
 const CATEGORY_LABELS = {
@@ -122,7 +120,6 @@ const elements = {
   interpreterId: $('interpreterId'),
   notes: $('callNotes'),
   notesSaveStatus: $('notesSaveStatus'),
-  fontSizeLabel: $('notesFontSize'),
   toast: $('toolToast'),
   dialog: $('soundbyteDialog'),
   form: $('soundbyteForm'),
@@ -144,7 +141,6 @@ function loadState() {
     name: '',
     interpreterId: '',
     notes: '',
-    fontSize: 16,
     soundbytes: structuredClone(DEFAULT_SOUNDBYTES),
   };
 
@@ -183,10 +179,6 @@ function loadState() {
       name: typeof parsed.name === 'string' ? parsed.name : fallback.name,
       interpreterId: typeof parsed.interpreterId === 'string' ? parsed.interpreterId : fallback.interpreterId,
       notes: typeof parsed.notes === 'string' ? parsed.notes : fallback.notes,
-      fontSize:
-        Number.isInteger(parsed.fontSize) && parsed.fontSize >= FONT_MIN && parsed.fontSize <= FONT_MAX
-          ? parsed.fontSize
-          : fallback.fontSize,
       soundbytes: savedSoundbytes,
     };
   } catch (error) {
@@ -256,8 +248,7 @@ function renderSoundbytes() {
     const actions = document.createElement('div');
     actions.className = 'soundbyte-actions';
     const categoryIndex = categorySoundbytes.findIndex((soundbyte) => soundbyte.id === item.id);
-    actions.append(
-      makeAction('Agregar a notas', () => insertIntoNotes(personalizedText(item.text))),
+    actions.append(      
       makeAction('Copiar', () => copyText(personalizedText(item.text), 'Frase copiada')),
       makeAction('Editar', () => openEditor(item)),
       makeAction('Eliminar', () => deleteSoundbyte(item.id)),
@@ -364,19 +355,6 @@ function deleteSoundbyte(id) {
   showToast('Frase eliminada');
 }
 
-function insertIntoNotes(text) {
-  const start = elements.notes.selectionStart;
-  const end = elements.notes.selectionEnd;
-  const before = elements.notes.value.slice(0, start);
-  const after = elements.notes.value.slice(end);
-  const separator = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
-  elements.notes.value = `${before}${separator}${text}${after}`;
-  const cursor = before.length + separator.length + text.length;
-  elements.notes.setSelectionRange(cursor, cursor);
-  updateNotes();
-  elements.notes.focus();
-}
-
 async function copyText(text, successMessage) {
   try {
     await navigator.clipboard.writeText(text);
@@ -402,14 +380,6 @@ async function copyText(text, successMessage) {
 
 function updateNotes() {
   state.notes = elements.notes.value;
-  persistState();
-}
-
-function setFontSize(size) {
-  state.fontSize = Math.max(FONT_MIN, Math.min(FONT_MAX, size));
-  elements.notes.style.fontSize = `${state.fontSize}px`;
-  elements.fontSizeLabel.value = `${state.fontSize} px`;
-  elements.fontSizeLabel.textContent = `${state.fontSize} px`;
   persistState();
 }
 
@@ -462,8 +432,6 @@ elements.interpreterId.addEventListener('input', () => {
   renderSoundbytes();
 });
 elements.notes.addEventListener('input', updateNotes);
-$('notesFontDown').addEventListener('click', () => setFontSize(state.fontSize - 2));
-$('notesFontUp').addEventListener('click', () => setFontSize(state.fontSize + 2));
 $('copyNotes').addEventListener('click', () => copyText(elements.notes.value, 'Notas copiadas'));
 $('clearNotes').addEventListener('click', () => {
   if (!elements.notes.value || window.confirm('¿Limpiar todas las notas de esta llamada?')) {
@@ -491,5 +459,4 @@ elements.dialog.addEventListener('close', () => {
 elements.name.value = state.name;
 elements.interpreterId.value = state.interpreterId;
 elements.notes.value = state.notes;
-setFontSize(state.fontSize);
 renderSoundbytes();
