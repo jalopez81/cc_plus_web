@@ -27,15 +27,16 @@
           </div>
         </div>
       </header>
+      <div class="accent-stripe" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
 
       <section class="settings" id="settings" aria-label="Configuración">
-        <button class="cfgbar" id="settingsBtn" type="button" aria-expanded="true">
+        <button class="cfgbar" id="settingsBtn" type="button" aria-expanded="false" aria-controls="settingsContent">
           <span class="cfg-label">ENGINES</span>
           <span class="cfg-summary" id="settingsSummary">Whisper · Off</span>
           <span class="cfg-chevron" aria-hidden="true">▾</span>
         </button>
-        <div class="settings-content expanded" id="settingsContent" aria-hidden="false">
-          <form id="settingsForm">
+        <div class="settings-content" id="settingsContent" aria-hidden="true">
+          <form id="settingsForm" novalidate inert>
             <div class="engine-row">
               <label class="engine-select-label">
                 <span class="sr-only">Transcription engine</span>
@@ -85,8 +86,12 @@
         <label class="sr-only" for="callNotes">Notas rápidas</label>
         <textarea id="callNotes" rows="1" spellcheck="true" placeholder="Notas rápidas de la llamada…"></textarea>
         <div class="notes-actions">
-          <button type="button" id="copyNotes" title="Copiar notas" aria-label="Copiar notas">Copiar</button>
-          <button type="button" id="clearNotes" title="Limpiar notas" aria-label="Limpiar notas">Limpiar</button>
+          <button type="button" class="icon-btn" id="copyNotes" title="Copiar notas" aria-label="Copiar notas">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" /></svg>
+          </button>
+          <button type="button" class="icon-btn" id="clearNotes" title="Limpiar notas" aria-label="Limpiar notas">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5M4 4.5l.6 8.1a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.1" /></svg>
+          </button>
         </div>
         <span class="sr-only" id="notesSaveStatus" role="status">Guardado automáticamente</span>
       </section>

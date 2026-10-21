@@ -387,6 +387,18 @@ async function start() {
   captureStarting = true;
   toggleBtn.disabled = true;
 
+  // Pressing Start with unsaved engine choices should use them, not the last saved ones.
+  if (formIsDirty()) {
+    try {
+      await saveForm();
+    } catch (err) {
+      setStatus('error', `Could not save settings: ${err.message || 'unknown error'}`);
+      captureStarting = false;
+      toggleBtn.disabled = false;
+      return;
+    }
+  }
+
   if (settings.transcriptionEngine === 'deepgram' && !settings.deepgramKey) {
     openSettings();
     form.deepgramKey.focus();
@@ -498,18 +510,43 @@ function syncTranslatorFields() {
   }
 }
 
-function openSettings() {
+function fillForm() {
   form.transcriptionEngine.value = settings.transcriptionEngine;
   form.transcriptionUrl.value = settings.transcriptionUrl || '';
   form.deepgramKey.value = settings.deepgramKey || '';
   form.translator.value = settings.translator;
-  form.myMemoryEmail.value = settings.myMemoryEmail;
-  form.deeplKey.value = settings.deeplKey;
+  form.myMemoryEmail.value = settings.myMemoryEmail || '';
+  form.deeplKey.value = settings.deeplKey || '';
   syncTranslatorFields();
-  form.inert = false;
-  settingsContent.classList.add('expanded');
-  settingsContent.setAttribute('aria-hidden', 'false');
-  settingsBtn.setAttribute('aria-expanded', 'true');
+}
+
+// Opening and closing only toggle visibility, so unsaved edits survive a collapse.
+function setSettingsOpen(open) {
+  form.inert = !open;
+  settingsContent.classList.toggle('expanded', open);
+  settingsContent.setAttribute('aria-hidden', String(!open));
+  settingsBtn.setAttribute('aria-expanded', String(open));
+}
+
+const openSettings = () => setSettingsOpen(true);
+const closeSettings = () => setSettingsOpen(false);
+const settingsOpen = () => settingsBtn.getAttribute('aria-expanded') === 'true';
+
+function formIsDirty() {
+  return Object.entries(readForm()).some(([key, value]) => value !== (settings[key] ?? ''));
+}
+
+async function saveForm() {
+  const values = readForm();
+  const restartRequired =
+    values.transcriptionEngine !== settings.transcriptionEngine ||
+    (values.transcriptionEngine === 'whisper' && values.transcriptionUrl !== settings.transcriptionUrl) ||
+    (values.transcriptionEngine === 'deepgram' && values.deepgramKey !== settings.deepgramKey);
+  const translatorChanged = values.translator !== settings.translator || values.deeplKey !== settings.deeplKey;
+  settings = await window.captioner.setSettings(values);
+  if (translatorChanged) lastProvider = null;
+  applyAppearance();
+  return { restartRequired, translatorChanged };
 }
 
 function readForm() {
@@ -529,26 +566,12 @@ form.addEventListener('input', () => {
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const values = readForm();
   try {
-    const previousSettings = await window.captioner.getSettings();
-    const previousEngine = previousSettings.transcriptionEngine || 'whisper';
-    const restartRequired =
-      values.transcriptionEngine !== previousEngine ||
-      (values.transcriptionEngine === 'whisper' &&
-        previousEngine === 'whisper' &&
-        values.transcriptionUrl !== previousSettings.transcriptionUrl) ||
-      (values.transcriptionEngine === 'deepgram' &&
-        previousEngine === 'deepgram' &&
-        values.deepgramKey !== previousSettings.deepgramKey);
-    settings = await window.captioner.setSettings(values);
-    applyAppearance();
-    form.inert = true;
-    settingsContent.classList.remove('expanded');
-    settingsContent.setAttribute('aria-hidden', 'true');
-    settingsBtn.setAttribute('aria-expanded', 'false');
+    const { restartRequired, translatorChanged } = await saveForm();
+    closeSettings();
     if (restartRequired) await restartIfLive();
     else if (!session) setStatus('idle', 'Idle');
+    else if (translatorChanged) setStatus('live', 'Listening');
   } catch (err) {
     setStatus('error', `Could not save settings: ${err.message || 'unknown error'}`);
   }
@@ -566,22 +589,21 @@ async function changeFontSize(delta) {
 }
 $('fontDownBtn').addEventListener('click', () => changeFontSize(-2));
 $('fontUpBtn').addEventListener('click', () => changeFontSize(2));
-settingsBtn.addEventListener('click', () => {
-  if (form.inert) openSettings();
-  else {
-    form.inert = true;
-    settingsContent.classList.remove('expanded');
-    settingsContent.setAttribute('aria-hidden', 'true');
-    settingsBtn.setAttribute('aria-expanded', 'false');
-  }
-});
+settingsBtn.addEventListener('click', () => setSettingsOpen(!settingsOpen()));
 
-const translatorSelect = form.translator;
-translatorSelect.addEventListener('change', () => {
+// Translator choice needs no restart, so apply it immediately; otherwise a stale saved
+// translator (e.g. DeepL without a key) keeps erroring until Done is pressed.
+form.translator.addEventListener('change', async () => {
   syncTranslatorFields();
   lastProvider = null;
+  try {
+    settings = await window.captioner.setSettings({ translator: form.translator.value });
+    applyAppearance();
+    if (session) setStatus('live', 'Listening');
+  } catch (err) {
+    setStatus('error', `Could not save settings: ${err.message || 'unknown error'}`);
+  }
 });
-form.transcriptionEngine.addEventListener('change', syncTranslatorFields);
 
 async function saveVisibilitySettings() {
   try {
@@ -610,7 +632,8 @@ async function saveBackground() {
 
 bgColorInput.addEventListener('input', previewBackground);
 bgColorInput.addEventListener('change', saveBackground);
-openSettings();
+fillForm();
+closeSettings();
 applyAppearance();
 renderHoldTimer();
 overlay.classList.add('idle');

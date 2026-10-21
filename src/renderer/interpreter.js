@@ -441,7 +441,7 @@ $('clearNotes').addEventListener('click', () => {
   }
 });
 $('addSoundbyte').addEventListener('click', () => openEditor());
-$('restoreSoundbytes').addEventListener('click', () => {
+$('restoreSoundbytes')?.addEventListener('click', () => {
   if (!window.confirm('¿Restaurar las frases iniciales? Se reemplazará la biblioteca actual.')) return;
   state.soundbytes = structuredClone(DEFAULT_SOUNDBYTES);
   activeCategory = DEFAULT_CATEGORY;
