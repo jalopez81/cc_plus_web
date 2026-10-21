@@ -14,7 +14,16 @@
     <div class="overlay" id="overlay">
       <header class="toolbar">
         <div class="toolbar-row titlebar">
-          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="brand-mark window-controls">
+            <button type="button" id="winClose" title="Close" aria-label="Close"></button>
+            <button type="button" id="winMinimize" title="Minimize" aria-label="Minimize"></button>
+            <button type="button" id="winCollapse" title="Collapse" aria-label="Collapse" aria-pressed="false"></button>
+          </div>
+          <nav class="app-menu" aria-label="Application menu">
+            <button type="button" data-menu="file">File</button>
+            <button type="button" data-menu="edit">Edit</button>
+            <button type="button" data-menu="view">View</button>
+          </nav>
           <div class="status">
             <span class="hold-timer" id="holdTimer" title="Hold time: resets on every new message">15:00</span>
             <span class="status-indicator">

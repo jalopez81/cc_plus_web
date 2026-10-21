@@ -4,6 +4,7 @@ const {
   desktopCapturer,
   globalShortcut,
   ipcMain,
+  Menu,
   safeStorage,
   screen,
   session,
@@ -81,20 +82,56 @@ function saveSettings(settings) {
   fs.writeFileSync(settingsPath(), JSON.stringify(out, null, 2));
 }
 
+const windowStatePath = () => path.join(app.getPath('userData'), 'window-state.json');
+
+const intersects = (a, b) =>
+  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+// Ignores saved bounds that would land off every connected display (e.g. an unplugged monitor).
+function loadWindowState() {
+  try {
+    const state = JSON.parse(fs.readFileSync(windowStatePath(), 'utf8'));
+    const { x, y, width, height } = state.bounds ?? {};
+    if (![x, y, width, height].every(Number.isFinite)) return null;
+    if (!screen.getAllDisplays().some((d) => intersects(d.workArea, state.bounds))) return null;
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+function saveWindowState() {
+  if (!win || win.isDestroyed()) return;
+  const maximized = win.isMaximized();
+  const bounds = maximized ? win.getNormalBounds() : win.getBounds();
+  // Persist the expanded height so a collapsed window reopens at full size.
+  if (expandedHeight !== null) bounds.height = expandedHeight;
+  try {
+    fs.mkdirSync(path.dirname(windowStatePath()), { recursive: true });
+    fs.writeFileSync(windowStatePath(), JSON.stringify({ bounds, maximized }, null, 2));
+  } catch (err) {
+    console.error('Could not save window state:', err);
+  }
+}
+
 function createWindow() {
   const { workArea } = screen.getPrimaryDisplay();
   const width = Math.min(workArea.width, APP_WIDTH);
   const height = Math.min(workArea.height, APP_HEIGHT);
+  const saved = loadWindowState();
 
   win = new BrowserWindow({
     width,
     height,
     x: Math.round(workArea.x + workArea.width - width),
     y: Math.round(workArea.y + (workArea.height - height) / 2),
+    ...saved?.bounds,
     minWidth: Math.min(MIN_WIDTH, workArea.width),
     minHeight: Math.min(MIN_HEIGHT, workArea.height),
     transparent: false,
     frame: true,
+    // Hidden rather than frameless keeps the native frame, so Aero Snap and edge resizing still work.
+    titleBarStyle: 'hidden',
     resizable: true,
     alwaysOnTop: false,
     hasShadow: true,
@@ -111,7 +148,104 @@ function createWindow() {
     },
   });
 
+  win.removeMenu();
+  if (saved?.maximized) win.maximize();
+  let saveTimer;
+  const scheduleSave = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveWindowState, 400);
+  };
+  win.on('move', scheduleSave);
+  win.on('resize', scheduleSave);
+  win.on('close', saveWindowState);
+
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+}
+
+// ---------- collapse ----------
+
+let expandedHeight = null;
+
+function setCollapsed(collapsed, contentHeight) {
+  if (collapsed === (expandedHeight !== null)) return collapsed;
+  const { workArea } = screen.getDisplayMatching(win.getBounds());
+  if (collapsed) {
+    if (win.isMaximized()) win.unmaximize();
+    expandedHeight = win.getBounds().height;
+    const [width] = win.getContentSize();
+    win.setMinimumSize(Math.min(MIN_WIDTH, workArea.width), 0);
+    win.setContentSize(width, Math.ceil(contentHeight));
+    win.setResizable(false);
+  } else {
+    const bounds = win.getBounds();
+    win.setResizable(true);
+    win.setMinimumSize(Math.min(MIN_WIDTH, workArea.width), Math.min(MIN_HEIGHT, workArea.height));
+    win.setBounds({ ...bounds, height: expandedHeight });
+    expandedHeight = null;
+  }
+  saveWindowState();
+  return collapsed;
+}
+
+// ---------- in-app menus ----------
+
+const sendMenuAction = (action) => win?.webContents.send('menu:action', action);
+
+function buildMenu(name) {
+  const settings = loadSettings();
+  const collapsed = expandedHeight !== null;
+  const templates = {
+    file: [
+      { label: 'Start / Stop capture', click: () => sendMenuAction('toggle-capture') },
+      { label: 'Clear captions', click: () => sendMenuAction('clear-captions') },
+      { label: 'Copy transcript', click: () => sendMenuAction('copy-transcript') },
+      { type: 'separator' },
+      { label: 'Minimize', click: () => win.minimize() },
+      { label: 'Quit', click: () => app.quit() },
+    ],
+    edit: [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'separator' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      { role: 'selectAll' },
+      { type: 'separator' },
+      { label: 'Copy call notes', click: () => sendMenuAction('copy-notes') },
+      { label: 'Clear call notes', click: () => sendMenuAction('clear-notes') },
+    ],
+    view: [
+      { label: 'Engine settings', click: () => sendMenuAction('toggle-settings') },
+      { label: collapsed ? 'Expand window' : 'Collapse window', click: () => sendMenuAction('toggle-collapse') },
+      { type: 'separator' },
+      {
+        label: 'Show transcription',
+        type: 'checkbox',
+        checked: settings.showTranscription,
+        click: () => sendMenuAction('toggle-transcription'),
+      },
+      {
+        label: 'Show translation',
+        type: 'checkbox',
+        checked: settings.showTranslation,
+        click: () => sendMenuAction('toggle-translation'),
+      },
+      { label: 'Larger text', click: () => sendMenuAction('font-up') },
+      { label: 'Smaller text', click: () => sendMenuAction('font-down') },
+      { type: 'separator' },
+      {
+        label: 'Always on top',
+        type: 'checkbox',
+        checked: win.isAlwaysOnTop(),
+        click: (item) => win.setAlwaysOnTop(item.checked),
+      },
+      { type: 'separator' },
+      { role: 'reload' },
+      { role: 'toggleDevTools' },
+    ],
+  };
+  return templates[name] && Menu.buildFromTemplate(templates[name]);
 }
 
 function registerDisplayMediaHandler() {
@@ -146,6 +280,13 @@ function registerIpc() {
     captureMode = mode === 'screen' ? 'screen' : 'window';
   });
   ipcMain.on('window:close', () => app.quit());
+  ipcMain.on('window:minimize', () => win?.minimize());
+  ipcMain.handle('window:set-collapsed', (_e, collapsed, contentHeight) =>
+    setCollapsed(Boolean(collapsed), Number(contentHeight) || 0)
+  );
+  ipcMain.on('menu:popup', (_e, name, x, y) => {
+    buildMenu(name)?.popup({ window: win, x: Math.round(x), y: Math.round(y) });
+  });
 }
 
 app.whenReady().then(() => {

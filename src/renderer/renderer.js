@@ -1,6 +1,6 @@
 import { DeepgramStream } from './deepgram.js';
 import { WhisperStream } from './whisper.js';
-import './interpreter.js';
+import { showToast } from './interpreter.js';
 
 const MAX_BLOCKS = 200;
 const HOLD_TIME_MS = 15 * 60 * 1000;
@@ -264,6 +264,12 @@ captionsEl.addEventListener('click', (e) => {
   markPair(selectedPair, 'selected', false);
   selectedPair = pair;
   markPair(selectedPair, 'selected', true);
+});
+
+document.addEventListener('click', (e) => {
+  if (!selectedPair || e.target.closest('.cap')) return;
+  markPair(selectedPair, 'selected', false);
+  selectedPair = null;
 });
 
 function commitBlock() {
@@ -632,6 +638,78 @@ async function saveBackground() {
 
 bgColorInput.addEventListener('input', previewBackground);
 bgColorInput.addEventListener('change', saveBackground);
+
+// ---------- window controls & menus ----------
+
+const collapseBtn = $('winCollapse');
+
+async function toggleCollapse() {
+  const collapsing = !overlay.classList.contains('collapsed');
+  overlay.classList.toggle('collapsed', collapsing);
+  // The 6px overlay inset plus its 1px border sit below the stripe once everything else is hidden.
+  const contentHeight = document.querySelector('.accent-stripe').getBoundingClientRect().bottom + 7;
+  const collapsed = await window.captioner.setCollapsed(collapsing, contentHeight);
+  overlay.classList.toggle('collapsed', collapsed);
+  collapseBtn.setAttribute('aria-pressed', String(collapsed));
+  collapseBtn.title = collapsed ? 'Expand' : 'Collapse';
+  collapseBtn.setAttribute('aria-label', collapseBtn.title);
+}
+
+$('winClose').addEventListener('click', () => window.captioner.close());
+$('winMinimize').addEventListener('click', () => window.captioner.minimize());
+collapseBtn.addEventListener('click', toggleCollapse);
+
+for (const button of document.querySelectorAll('.app-menu [data-menu]')) {
+  button.addEventListener('click', () => {
+    const rect = button.getBoundingClientRect();
+    window.captioner.popupMenu(button.dataset.menu, rect.left, rect.bottom + 2);
+  });
+}
+
+async function copyTranscript() {
+  const lines = [...captionsEl.querySelectorAll('.cap')].map((cap) => {
+    const time = cap.querySelector('.time').textContent;
+    const label = cap.querySelector('.lang').textContent;
+    const src = cap.querySelector('.text').textContent.trim();
+    const tr = cap.querySelector('.tr').textContent.trim();
+    return [`[${time}] ${label}: ${src}`, tr && `    → ${tr}`].filter(Boolean).join('\n');
+  });
+  if (lines.length === 0) {
+    showToast('No hay transcripción para copiar');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(lines.join('\n'));
+    showToast('Transcripción copiada');
+  } catch {
+    showToast('No se pudo copiar la transcripción');
+  }
+}
+
+function toggleVisibility(checkbox) {
+  checkbox.checked = !checkbox.checked;
+  void saveVisibilitySettings();
+}
+
+const MENU_ACTIONS = {
+  'toggle-capture': () => (session ? stop() : start()),
+  'clear-captions': clearCaptions,
+  'copy-transcript': copyTranscript,
+  'copy-notes': () => $('copyNotes').click(),
+  'clear-notes': () => $('clearNotes').click(),
+  'toggle-settings': () => {
+    if (overlay.classList.contains('collapsed')) void toggleCollapse();
+    setSettingsOpen(!settingsOpen());
+  },
+  'toggle-collapse': toggleCollapse,
+  'toggle-transcription': () => toggleVisibility(showTranscriptionToggle),
+  'toggle-translation': () => toggleVisibility(showTranslationToggle),
+  'font-up': () => changeFontSize(2),
+  'font-down': () => changeFontSize(-2),
+};
+
+window.captioner.onMenuAction((action) => MENU_ACTIONS[action]?.());
+
 fillForm();
 closeSettings();
 applyAppearance();

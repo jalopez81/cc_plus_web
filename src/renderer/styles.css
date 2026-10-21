@@ -432,8 +432,15 @@ select option {
   color: var(--english);
 }
 
-body.hide-transcription .cap .src {
+/* Keep the flag and speaker label so translations stay attributed. */
+body.hide-transcription .cap .src .text {
   display: none;
+}
+
+body.hide-transcription .cap .tr {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: 0;
 }
 
 body.hide-translation .cap .tr {
@@ -1100,7 +1107,7 @@ body {
 }
 
 .accent-stripe span:nth-child(1) {
-  background: #263349;
+  background: #3273e2;
 }
 
 .accent-stripe span:nth-child(2) {
@@ -1605,4 +1612,87 @@ body {
 .settings .actions {
   display: flex;
   justify-content: flex-end;
+}
+
+/* Custom title bar: the native one is hidden, so these replace its controls. */
+.window-controls button {
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: rgba(0, 0, 0, 0.6);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.window-controls button:nth-child(1) {
+  background: #ff5f57;
+}
+
+.window-controls button:nth-child(2) {
+  background: #febc2e;
+}
+
+.window-controls button:nth-child(3) {
+  background: #28c840;
+}
+
+.window-controls button:hover {
+  filter: brightness(1.1);
+}
+
+.window-controls:hover button:nth-child(1)::after {
+  content: '×';
+}
+
+.window-controls:hover button:nth-child(2)::after {
+  content: '−';
+}
+
+.window-controls:hover button:nth-child(3)::after {
+  content: '▴';
+}
+
+.window-controls:hover button[aria-pressed='true']::after {
+  content: '▾';
+}
+
+.window-controls button:focus-visible,
+.app-menu button:focus-visible {
+  outline: 2px solid #5ac8fa;
+  outline-offset: 2px;
+}
+
+.app-menu {
+  display: flex;
+  flex: none;
+  gap: 1px;
+  margin-left: -2px;
+}
+
+.app-menu button {
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #8b98b3;
+  font-size: 11px;
+}
+
+.app-menu button:hover {
+  background: #242f47;
+  color: #e8ecf6;
+}
+
+.overlay.collapsed .settings,
+.overlay.collapsed .call-tools,
+.overlay.collapsed .captions,
+.overlay.collapsed .interpreter-tools,
+.overlay.collapsed .bottom-toolbar,
+.overlay.collapsed .tool-popover {
+  display: none;
 }

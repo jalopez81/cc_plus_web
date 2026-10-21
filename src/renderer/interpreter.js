@@ -93,6 +93,14 @@ const DEFAULT_SOUNDBYTES = [
 
 const STORAGE_KEY = 'interpreter-toolkit-v1';
 const DEFAULT_SOUNDBYTE_COLOR = '#252832';
+// Muted tones that stay readable on the dark theme; card text contrast is computed per color anyway.
+const SOUNDBYTE_PALETTE = [
+  '#2d3a5c', '#3b2f5c', '#24494b', '#4d3826', '#4d2a3d',
+  '#2f4a30', '#45421f', '#264160', '#553044', '#2b5046',
+];
+const randomSoundbyteColor = () => SOUNDBYTE_PALETTE[Math.floor(Math.random() * SOUNDBYTE_PALETTE.length)];
+const withRandomColors = (soundbytes) =>
+  soundbytes.map((item) => ({ ...item, backgroundColor: item.backgroundColor || randomSoundbyteColor() }));
 const DEFAULT_CATEGORY = 'Saludos y cierres';
 const CATEGORY_LABELS = {
   'Saludos y cierres': 'Saludos',
@@ -132,6 +140,7 @@ const elements = {
 };
 
 let state = loadState();
+persistState(); // Saves any colors just assigned so they stay the same across launches.
 let activeCategory = DEFAULT_CATEGORY;
 let editingSoundbyteId = null;
 let toastTimeout;
@@ -141,7 +150,7 @@ function loadState() {
     name: '',
     interpreterId: '',
     notes: '',
-    soundbytes: structuredClone(DEFAULT_SOUNDBYTES),
+    soundbytes: withRandomColors(structuredClone(DEFAULT_SOUNDBYTES)),
   };
 
   try {
@@ -168,7 +177,11 @@ function loadState() {
               ...item,
               category: item.category === 'Saludos y dial-out' ? DEFAULT_CATEGORY : item.category,
               text: isUnmodifiedOldDefault && updatedDefault ? updatedDefault.text : item.text,
-              backgroundColor: isHexColor(item.backgroundColor) ? item.backgroundColor : '',
+              // The old color-input default counts as "never chosen", so those cards get a random color too.
+              backgroundColor:
+                isHexColor(item.backgroundColor) && item.backgroundColor !== DEFAULT_SOUNDBYTE_COLOR
+                  ? item.backgroundColor
+                  : randomSoundbyteColor(),
             };
           })
           .filter((item) => Object.hasOwn(CATEGORY_LABELS, item.category))
@@ -260,6 +273,7 @@ function renderSoundbytes() {
         categoryIndex === categorySoundbytes.length - 1,
       ),
     );
+    card.dataset.id = item.id;
     card.append(heading, text, actions);
     elements.soundbyteList.append(card);
   }
@@ -297,6 +311,14 @@ function moveSoundbyte(id, offset) {
   ];
   persistState();
   renderSoundbytes();
+
+  // Keep focus on the moved card's arrow so repeated clicks or Enter presses keep moving it.
+  const card = [...elements.soundbyteList.children].find((el) => el.dataset.id === String(id));
+  if (!card) return;
+  const [up, down] = card.querySelectorAll('.soundbyte-actions button[aria-label^="Mover"]');
+  const preferred = offset < 0 ? up : down;
+  (preferred.disabled ? (offset < 0 ? down : up) : preferred).focus();
+  card.scrollIntoView({ block: 'nearest' });
 }
 
 function languageLabel(language) {
@@ -316,7 +338,7 @@ function openEditor(item = null) {
   elements.text.value = item?.text ?? '';
   elements.backgroundColor.value = isHexColor(item?.backgroundColor)
     ? item.backgroundColor
-    : DEFAULT_SOUNDBYTE_COLOR;
+    : randomSoundbyteColor();
   elements.dialog.showModal();
   elements.title.focus();
 }
@@ -383,7 +405,7 @@ function updateNotes() {
   persistState();
 }
 
-function showToast(message) {
+export function showToast(message) {
   elements.toast.textContent = message;
   elements.toast.classList.add('visible');
   clearTimeout(toastTimeout);
@@ -406,11 +428,11 @@ for (const button of document.querySelectorAll('[data-close-popover]')) {
 }
 
 document.addEventListener('click', (event) => {
-  if (
-    elements.dialog.open ||
-    event.target.closest('.tool-popover') ||
-    event.target.closest('.interpreter-tools')
-  ) {
+  // composedPath() is captured at dispatch, so it still holds the popover even when the
+  // click re-rendered the list and detached the target (e.g. reordering a soundbyte).
+  const path = event.composedPath();
+  const inside = (selector) => path.some((node) => node instanceof Element && node.matches(selector));
+  if (elements.dialog.open || inside('.tool-popover') || inside('.interpreter-tools')) {
     return;
   }
   showPopover(null);
@@ -443,7 +465,7 @@ $('clearNotes').addEventListener('click', () => {
 $('addSoundbyte').addEventListener('click', () => openEditor());
 $('restoreSoundbytes')?.addEventListener('click', () => {
   if (!window.confirm('¿Restaurar las frases iniciales? Se reemplazará la biblioteca actual.')) return;
-  state.soundbytes = structuredClone(DEFAULT_SOUNDBYTES);
+  state.soundbytes = withRandomColors(structuredClone(DEFAULT_SOUNDBYTES));
   activeCategory = DEFAULT_CATEGORY;
   persistState();
   renderSoundbytes();
