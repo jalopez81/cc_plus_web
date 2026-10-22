@@ -25,11 +25,16 @@
             <button type="button" data-menu="view">View</button>
           </nav>
           <div class="status">
+            <span class="dot" id="statusDot" role="status" aria-label="Idle" title="Idle"></span>
             <span class="hold-timer" id="holdTimer" title="Hold time: resets on every new message">15:00</span>
-            <span class="status-indicator">
-              <span class="dot" id="statusDot"></span>
-              <span id="statusText">Idle</span>
-            </span>
+            <button type="button" class="mic-indicator" id="micIndicator" data-state="unknown" title="Headset mic: click to start monitoring" aria-label="Headset mic status">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" /><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5" /><path class="slash" d="M2.5 2.5l11 11" /></svg>
+              <span class="mic-label" id="micLabel">MIC</span>
+            </button>
+            <button type="button" class="speak-indicator" id="speakIndicator" title="Transcription on: click to mute" aria-label="Mute transcription" aria-pressed="false">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6h2.5l3.5-3v10l-3.5-3H2.5z" /><path class="waves" d="M11 5.5a3.5 3.5 0 0 1 0 5M12.8 3.8a6 6 0 0 1 0 8.4" /><path class="cross" d="M11 6l3.5 4M14.5 6L11 10" /></svg>
+              <span id="speakLabel">ON</span>
+            </button>
           </div>
           <div class="controls">
             <button id="toggleBtn" class="primary start" title="Capture system audio">Start</button>

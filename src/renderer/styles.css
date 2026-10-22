@@ -1040,18 +1040,6 @@ body {
   color: #8d9ab5;
 }
 
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.status-indicator #statusText {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .hold-timer {
   padding: 0;
   background: none;
@@ -1694,5 +1682,129 @@ body {
 .overlay.collapsed .interpreter-tools,
 .overlay.collapsed .bottom-toolbar,
 .overlay.collapsed .tool-popover {
+  display: none;
+}
+
+/* Headset mic indicator: red when the mic delivers digital silence (hardware mute). */
+.mic-indicator {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid #2b3550;
+  border-radius: 6px;
+  background: #1f293e;
+  color: #8d9ab5;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.mic-indicator svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mic-indicator .slash {
+  display: none;
+}
+
+.mic-indicator[data-state='on'] {
+  border-color: rgba(46, 196, 182, 0.5);
+  color: #2ec4b6;
+}
+
+.mic-indicator[data-state='on'].speaking {
+  background: rgba(46, 196, 182, 0.18);
+  box-shadow: 0 0 7px rgba(46, 196, 182, 0.55);
+}
+
+.mic-indicator[data-state='off'] {
+  border-color: #ff453a;
+  background: #ff453a;
+  color: #fff;
+}
+
+.mic-indicator[data-state='off'] .slash {
+  display: inline;
+}
+
+/* Speak indicator: whether system audio is sent to transcription/translation (mute rests the APIs). */
+.speak-indicator {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid rgba(46, 196, 182, 0.5);
+  border-radius: 6px;
+  background: #1f293e;
+  color: #2ec4b6;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.speak-indicator svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.speak-indicator.speaking {
+  background: rgba(46, 196, 182, 0.18);
+  box-shadow: 0 0 7px rgba(46, 196, 182, 0.55);
+}
+
+.speak-indicator .cross,
+.speak-indicator.muted .waves {
+  display: none;
+}
+
+.speak-indicator.muted .cross {
+  display: inline;
+}
+
+.speak-indicator.muted {
+  border-color: rgba(255, 95, 87, 0.55);
+  background: rgba(255, 69, 58, 0.12);
+  color: #ff6b61;
+}
+
+.speak-indicator.muted.speaking {
+  background: rgba(255, 69, 58, 0.24);
+  box-shadow: 0 0 7px rgba(255, 69, 58, 0.6);
+}
+
+/* Quick phrases get their own tint so it is obvious the main captions are covered. */
+.tool-popover.soundbyte-popover {
+  border-color: #4c3a6e;
+  background: #221a33;
+}
+
+.soundbyte-popover .interpreter-profile input,
+.soundbyte-popover .soundbyte-search input {
+  border-color: #4c3a6e;
+  background: #2e2444;
+}
+
+/* macOS draws its own traffic lights here; keep their space and hide the custom ones (collapse stays in View). */
+.platform-darwin .window-controls {
+  width: 56px;
+}
+
+.platform-darwin .window-controls button {
   display: none;
 }

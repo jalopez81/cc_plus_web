@@ -20,6 +20,19 @@ export class DeepgramStream {
     this.onStatus = onStatus;
     this.reconnects = 0;
     this.stopped = false;
+    this.muted = false;
+  }
+
+  // Deepgram bills streamed audio, so muting pauses the recorder; KeepAlive holds the socket open.
+  setMuted(muted) {
+    this.muted = muted;
+    if (!this.recorder || this.recorder.state === 'inactive') return;
+    if (muted) {
+      this.recorder.pause();
+      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'Finalize' }));
+    } else {
+      this.recorder.resume();
+    }
   }
 
   start(audioStream) {
@@ -128,6 +141,7 @@ export class DeepgramStream {
       this.onStatus('error', `Deepgram audio recording failed: ${event.error?.message || 'unknown error'}`);
     };
     this.recorder.start(CHUNK_MS);
+    if (this.muted) this.recorder.pause();
   }
 
   teardownConnection() {

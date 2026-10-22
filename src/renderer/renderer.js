@@ -14,9 +14,8 @@ const $ = (id) => document.getElementById(id);
 const overlay = $('overlay');
 const captionsEl = $('captions');
 const placeholder = $('placeholder');
-const statusDot = $('statusDot');
-const statusText = $('statusText');
 const toggleBtn = $('toggleBtn');
+const statusDot = $('statusDot');
 const form = $('settingsForm');
 const settingsBtn = $('settingsBtn');
 const settingsSummary = $('settingsSummary');
@@ -24,11 +23,14 @@ const settingsContent = $('settingsContent');
 const showTranscriptionToggle = $('showTranscriptionToggle');
 const showTranslationToggle = $('showTranslationToggle');
 
+document.body.classList.add(`platform-${window.captioner.platform}`);
+
 let settings = await window.captioner.getSettings();
 settings.transcriptionEngine ??= 'whisper';
 settings.deepgramKey ??= '';
 settings.showTranscription = settings.showTranscription ?? settings.showOriginal ?? true;
 settings.showTranslation = settings.showTranslation ?? true;
+settings.micMonitor ??= true;
 let session = null;
 let captureStarting = false;
 let currentBlock = null;
@@ -39,8 +41,10 @@ let lastProvider = null;
 
 function setStatus(state, text) {
   statusDot.className = `dot ${state === 'idle' ? '' : state}`;
-  statusText.textContent = text;
-  statusText.title = text;
+  statusDot.title = text;
+  statusDot.setAttribute('aria-label', text);
+  toggleBtn.title = text;
+  if (state === 'error' || text.startsWith('Translation unavailable')) showToast(text);
 }
 
 const bgColorInput = $('bgColorInput');
@@ -132,6 +136,126 @@ function stopHoldTimer() {
   holdDeadline = null;
   clearInterval(holdInterval);
   renderHoldTimer();
+}
+
+// ---------- audio meters ----------
+
+const METER_INTERVAL_MS = 100;
+// Peak amplitude of system audio that counts as speech, whether sent or withheld by mute.
+const SPEECH_LEVEL = 0.02;
+const SPEECH_HOLD_MS = 400;
+// Headsets muted in hardware deliver digital zeros; a live mic's noise floor sits above one 16-bit step.
+const MIC_SILENCE_LEVEL = 1e-5;
+const MIC_MUTE_AFTER_MS = 1200;
+const MIC_SPEAKING_LEVEL = 0.05;
+
+let meterCtx = null;
+
+function createLevelMeter(stream) {
+  meterCtx ??= new AudioContext();
+  void meterCtx.resume();
+  const source = meterCtx.createMediaStreamSource(stream);
+  const analyser = meterCtx.createAnalyser();
+  analyser.fftSize = 2048;
+  source.connect(analyser);
+  const samples = new Float32Array(analyser.fftSize);
+  return {
+    peak() {
+      analyser.getFloatTimeDomainData(samples);
+      let max = 0;
+      for (const v of samples) max = Math.max(max, Math.abs(v));
+      return max;
+    },
+    stop: () => source.disconnect(),
+  };
+}
+
+// ---------- mute ----------
+
+const speakIndicator = $('speakIndicator');
+const speakLabel = $('speakLabel');
+let muted = false;
+let systemMeter = null;
+let speechUntil = 0;
+
+function setMuted(next) {
+  muted = next;
+  session?.transcription.setMuted(muted);
+  speakIndicator.classList.toggle('muted', muted);
+  speakIndicator.setAttribute('aria-pressed', String(muted));
+  speakIndicator.title = muted
+    ? 'Transcription muted: audio is not sent · click to resume'
+    : 'Transcription on: click to mute';
+  speakIndicator.setAttribute('aria-label', muted ? 'Unmute transcription' : 'Mute transcription');
+  speakLabel.textContent = muted ? 'OFF' : 'ON';
+}
+
+// ---------- headset mic ----------
+
+const micIndicator = $('micIndicator');
+const micLabel = $('micLabel');
+let micStream = null;
+let micMeter = null;
+let micLastSound = 0;
+let micGeneration = 0;
+
+function stopMicMonitor() {
+  micGeneration += 1;
+  micMeter?.stop();
+  micStream?.getTracks().forEach((track) => track.stop());
+  micMeter = null;
+  micStream = null;
+  micIndicator.dataset.state = 'unknown';
+  micIndicator.classList.remove('speaking');
+  micLabel.textContent = 'MIC';
+  micIndicator.title = 'Headset mic: click to start monitoring';
+}
+
+async function startMicMonitor() {
+  stopMicMonitor();
+  const generation = micGeneration;
+  try {
+    if (!(await window.captioner.requestMicAccess())) throw new Error('microphone access denied');
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+    if (generation !== micGeneration) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    micStream = stream;
+    micMeter = createLevelMeter(stream);
+    micLastSound = Date.now();
+    const [track] = stream.getAudioTracks();
+    micIndicator.title = `Headset mic: ${track.label || 'default input'} · click to stop monitoring`;
+  } catch (err) {
+    if (generation !== micGeneration) return;
+    micIndicator.title = `Mic monitor unavailable: ${err.message || err.name} · click to retry`;
+  }
+}
+
+function renderMic(now) {
+  const [track] = micStream.getAudioTracks();
+  const peak = micMeter.peak();
+  if (peak > MIC_SILENCE_LEVEL) micLastSound = now;
+  const off = track.muted || track.readyState === 'ended' || now - micLastSound > MIC_MUTE_AFTER_MS;
+  micIndicator.dataset.state = off ? 'off' : 'on';
+  micIndicator.classList.toggle('speaking', !off && peak > MIC_SPEAKING_LEVEL);
+  micLabel.textContent = off ? 'OFF' : 'ON';
+}
+
+async function toggleMicMonitor() {
+  const enable = !micStream;
+  if (enable) await startMicMonitor();
+  else stopMicMonitor();
+  settings = await window.captioner.setSettings({ micMonitor: enable });
+}
+
+function pollMeters() {
+  const now = Date.now();
+  if (systemMeter && systemMeter.peak() > SPEECH_LEVEL) speechUntil = now + SPEECH_HOLD_MS;
+  speakIndicator.classList.toggle('speaking', Boolean(systemMeter) && now < speechUntil);
+  if (micMeter) renderMic(now);
 }
 
 // ---------- captions ----------
@@ -344,6 +468,7 @@ function handleDeepgramTranscript({ text, language, isFinal, speechFinal }) {
     if (speechFinal) commitBlock();
     return;
   }
+  resetHoldTimer();
   const lang = baseLang(language);
   if (currentBlock && currentBlock.lang !== lang) commitBlock();
   if (!currentBlock) currentBlock = createBlock(lang);
@@ -468,6 +593,8 @@ async function start() {
             onStatus,
           });
 
+    transcription.setMuted(muted);
+    systemMeter = createLevelMeter(audioStream);
     session = { stream, transcription };
     audioTracks[0].addEventListener('ended', () => stop());
     await transcription.start(audioStream);
@@ -479,6 +606,8 @@ async function start() {
   } catch (err) {
     if (session) stop({ keepStatus: true });
     else stream?.getTracks().forEach((track) => track.stop());
+    systemMeter?.stop();
+    systemMeter = null;
     setStatus('error', `Computer audio capture failed: ${err.message || err.name}`);
   } finally {
     captureStarting = false;
@@ -492,6 +621,8 @@ function stop({ keepStatus = false } = {}) {
   session = null;
   transcription.stop();
   stream.getTracks().forEach((t) => t.stop());
+  systemMeter?.stop();
+  systemMeter = null;
   stopHoldTimer();
   commitBlock();
   toggleBtn.textContent = 'Start';
@@ -586,6 +717,12 @@ form.addEventListener('submit', async (e) => {
 // ---------- toolbar ----------
 
 toggleBtn.addEventListener('click', () => (session ? stop() : start()));
+speakIndicator.addEventListener('click', () => setMuted(!muted));
+micIndicator.addEventListener('click', () => void toggleMicMonitor());
+// A plugged or unplugged headset changes the default input, so follow it.
+navigator.mediaDevices.addEventListener('devicechange', () => {
+  if (micStream) void startMicMonitor();
+});
 $('clearBtn').addEventListener('click', clearCaptions);
 
 async function changeFontSize(delta) {
@@ -693,6 +830,7 @@ function toggleVisibility(checkbox) {
 
 const MENU_ACTIONS = {
   'toggle-capture': () => (session ? stop() : start()),
+  'toggle-mute': () => setMuted(!muted),
   'clear-captions': clearCaptions,
   'copy-transcript': copyTranscript,
   'copy-notes': () => $('copyNotes').click(),
@@ -715,3 +853,5 @@ closeSettings();
 applyAppearance();
 renderHoldTimer();
 overlay.classList.add('idle');
+setInterval(pollMeters, METER_INTERVAL_MS);
+if (settings.micMonitor) void startMicMonitor();

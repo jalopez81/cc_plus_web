@@ -16,6 +16,12 @@ export class WhisperStream {
     this.audioContext = null;
     this.processor = null;
     this.recording = false;
+    this.muted = false;
+  }
+
+  // Muted streams send silence instead of stopping, so the server's VAD flushes the pending utterance.
+  setMuted(muted) {
+    this.muted = muted;
   }
 
   async start(audioStream) {
@@ -139,6 +145,7 @@ export class WhisperStream {
   sendFrame(frame) {
     if (!this.recording || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     if (!frame || frame.length === 0) return;
+    if (this.muted) frame = new Int16Array(frame.length);
 
     const view = new DataView(new ArrayBuffer(frame.byteLength));
     const int16 = frame instanceof Int16Array ? frame : new Int16Array(frame.buffer, frame.byteOffset, frame.length);

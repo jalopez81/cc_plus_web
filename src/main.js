@@ -8,6 +8,7 @@ const {
   safeStorage,
   screen,
   session,
+  systemPreferences,
 } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -25,6 +26,7 @@ const DEFAULT_SETTINGS = {
   bgColor: '#1c2740',
   showTranscription: true,
   showTranslation: true,
+  micMonitor: true,
 };
 
 const MIN_WIDTH = 420;
@@ -140,6 +142,8 @@ function createWindow() {
     acceptFirstMouse: true,
     backgroundColor: '#14161e',
     ...(process.platform === 'win32' && { icon: path.join(__dirname, '..', 'favicon.ico') }),
+    // macOS keeps its native traffic lights with a hidden title bar; line them up with the toolbar row.
+    ...(process.platform === 'darwin' && { trafficLightPosition: { x: 19, y: 22 } }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -197,6 +201,7 @@ function buildMenu(name) {
   const templates = {
     file: [
       { label: 'Start / Stop capture', click: () => sendMenuAction('toggle-capture') },
+      { label: 'Mute / Unmute transcription', click: () => sendMenuAction('toggle-mute') },
       { label: 'Clear captions', click: () => sendMenuAction('clear-captions') },
       { label: 'Copy transcript', click: () => sendMenuAction('copy-transcript') },
       { type: 'separator' },
@@ -279,6 +284,9 @@ function registerIpc() {
   ipcMain.handle('capture:set-mode', (_e, mode) => {
     captureMode = mode === 'screen' ? 'screen' : 'window';
   });
+  ipcMain.handle('mic:request-access', () =>
+    process.platform === 'darwin' ? systemPreferences.askForMediaAccess('microphone') : true
+  );
   ipcMain.on('window:close', () => app.quit());
   ipcMain.on('window:minimize', () => win?.minimize());
   ipcMain.handle('window:set-collapsed', (_e, collapsed, contentHeight) =>
@@ -291,8 +299,13 @@ function registerIpc() {
 
 app.whenReady().then(() => {
   migrateLegacySettings();
+  // Packaged builds take the Dock icon from the bundle's .icns; `npm start` runs the stock Electron.app.
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    app.dock.setIcon(path.join(__dirname, '..', 'assets', 'icon.png'));
+  }
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => {
-    cb(permission === 'media' && (details.mediaTypes ?? []).length === 0);
+    // Display capture arrives with no media types; the headset monitor asks for audio only, never video.
+    cb(permission === 'media' && (details.mediaTypes ?? []).every((type) => type === 'audio'));
   });
   registerDisplayMediaHandler();
   registerIpc();
