@@ -356,6 +356,12 @@ select option {
   white-space: pre-line;
 }
 
+/* Paragraph mode folds the per-sentence line breaks back into spaces. */
+body.paragraphs .cap .text,
+body.paragraphs .cap .tr {
+  white-space: normal;
+}
+
 .cap .src .text {
   display: block;
   margin-top: 2px;

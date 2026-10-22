@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS = {
   bgColor: '#1c2740',
   showTranscription: true,
   showTranslation: true,
+  sentenceLines: true,
   micMonitor: true,
 };
 
@@ -235,6 +236,12 @@ function buildMenu(name) {
         type: 'checkbox',
         checked: settings.showTranslation,
         click: () => sendMenuAction('toggle-translation'),
+      },
+      {
+        label: 'One sentence per line',
+        type: 'checkbox',
+        checked: settings.sentenceLines,
+        click: () => sendMenuAction('toggle-sentence-lines'),
       },
       { label: 'Larger text', click: () => sendMenuAction('font-up') },
       { label: 'Smaller text', click: () => sendMenuAction('font-down') },

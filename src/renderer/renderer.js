@@ -22,6 +22,7 @@ const settingsSummary = $('settingsSummary');
 const settingsContent = $('settingsContent');
 const showTranscriptionToggle = $('showTranscriptionToggle');
 const showTranslationToggle = $('showTranslationToggle');
+const sentenceLinesToggle = $('sentenceLinesToggle');
 
 document.body.classList.add(`platform-${window.captioner.platform}`);
 
@@ -30,6 +31,7 @@ settings.transcriptionEngine ??= 'whisper';
 settings.deepgramKey ??= '';
 settings.showTranscription = settings.showTranscription ?? settings.showOriginal ?? true;
 settings.showTranslation = settings.showTranslation ?? true;
+settings.sentenceLines ??= true;
 settings.micMonitor ??= true;
 let session = null;
 let captureStarting = false;
@@ -68,6 +70,7 @@ function applyAppearance() {
   document.body.classList.toggle('light-bg', isLightBackground(rgb));
   document.body.classList.toggle('hide-transcription', !settings.showTranscription);
   document.body.classList.toggle('hide-translation', !settings.showTranslation);
+  document.body.classList.toggle('paragraphs', !settings.sentenceLines);
   bgColorInput.value = settings.bgColor;
   const translatorNames = {
     auto: 'Auto',
@@ -81,6 +84,7 @@ function applyAppearance() {
   settingsSummary.textContent = `${transcriptionName} · ${translatorNames[settings.translator] ?? 'Auto'}`;
   showTranscriptionToggle.checked = settings.showTranscription;
   showTranslationToggle.checked = settings.showTranslation;
+  sentenceLinesToggle.checked = settings.sentenceLines;
 }
 
 // ---------- hold timer ----------
@@ -753,6 +757,7 @@ async function saveVisibilitySettings() {
     settings = await window.captioner.setSettings({
       showTranscription: showTranscriptionToggle.checked,
       showTranslation: showTranslationToggle.checked,
+      sentenceLines: sentenceLinesToggle.checked,
     });
     applyAppearance();
   } catch (err) {
@@ -762,6 +767,7 @@ async function saveVisibilitySettings() {
 
 showTranscriptionToggle.addEventListener('change', saveVisibilitySettings);
 showTranslationToggle.addEventListener('change', saveVisibilitySettings);
+sentenceLinesToggle.addEventListener('change', saveVisibilitySettings);
 
 function previewBackground() {
   settings = { ...settings, bgColor: bgColorInput.value };
@@ -842,6 +848,7 @@ const MENU_ACTIONS = {
   'toggle-collapse': toggleCollapse,
   'toggle-transcription': () => toggleVisibility(showTranscriptionToggle),
   'toggle-translation': () => toggleVisibility(showTranslationToggle),
+  'toggle-sentence-lines': () => toggleVisibility(sentenceLinesToggle),
   'font-up': () => changeFontSize(2),
   'font-down': () => changeFontSize(-2),
 };
