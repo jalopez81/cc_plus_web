@@ -27,17 +27,17 @@
           <div class="status">
             <span class="dot" id="statusDot" role="status" aria-label="Idle" title="Idle"></span>
             <span class="hold-timer" id="holdTimer" title="Hold time: resets on every new message">15:00</span>
-            <button type="button" class="mic-indicator" id="micIndicator" data-state="unknown" title="Headset mic: click to start monitoring" aria-label="Headset mic status">
+            <span class="mic-indicator" id="micIndicator" role="img" data-state="unknown" title="Headset mic" aria-label="Headset mic status">
               <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" /><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5" /><path class="slash" d="M2.5 2.5l11 11" /></svg>
               <span class="mic-label" id="micLabel">MIC</span>
-            </button>
+            </span>
             <button type="button" class="speak-indicator" id="speakIndicator" title="Transcription on: click to mute" aria-label="Mute transcription" aria-pressed="false">
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6h2.5l3.5-3v10l-3.5-3H2.5z" /><path class="waves" d="M11 5.5a3.5 3.5 0 0 1 0 5M12.8 3.8a6 6 0 0 1 0 8.4" /><path class="cross" d="M11 6l3.5 4M14.5 6L11 10" /></svg>
               <span id="speakLabel">ON</span>
             </button>
           </div>
           <div class="controls">
-            <button id="toggleBtn" class="primary start" title="Capture system audio">Start</button>
+            <button id="toggleBtn" class="primary start" data-state="idle" title="Capture system audio">Start</button>
           </div>
         </div>
       </header>
@@ -211,8 +211,12 @@
         </label>
         <span class="toolbar-spacer"></span>
         <button id="fontDownBtn" title="Smaller text" aria-label="Smaller text">−</button>
+        <output class="font-size-value" id="fontSizeValue" title="Text size" aria-live="polite">26</output>
         <button id="fontUpBtn" title="Larger text" aria-label="Larger text">+</button>
-        <button id="clearBtn" title="Clear captions" aria-label="Clear captions">Clear</button>
+        <button id="clearBtn" class="clear-btn" title="Clear captions" aria-label="Clear captions">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M14 2 8.6 7.4" /><path d="M7.6 6.6l1.8 1.8" /><path d="M7.4 8.6c-1.5-.6-3.1.2-3.4 1.8-.2 1.2-.7 2-1.5 2.5 2 .7 4.6.3 5.5-1.3.5-.9.4-2-.6-3z" /></svg>
+          <span>Clear</span>
+        </button>
       </footer>
     </div>
     <script type="module" src="renderer.js"></script>

@@ -1814,3 +1814,140 @@ body {
 .platform-darwin .window-controls button {
   display: none;
 }
+
+/* The bubble still being spoken reserves ~4 lines per language so it doesn't keep growing under
+   the reader; once the language changes (.active removed) it shrinks to fit, or grows past 4. */
+.cap .src .text,
+.cap .tr {
+  min-height: 0;
+  transition: min-height 0.3s ease;
+}
+
+.cap.active .src .text,
+.cap.active .tr {
+  min-height: 4lh;
+}
+
+/* Reserve the translation area even before the first translation arrives. */
+body:not(.translator-off):not(.hide-translation) .cap.active .tr:empty {
+  display: block;
+}
+
+.cap-meta {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.split-btn {
+  padding: 1px 6px;
+  border: 1px solid #3d4b68;
+  border-radius: 4px;
+  background: #1f293e;
+  color: #a8b5cd;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-shadow: none;
+}
+
+.split-btn:hover {
+  border-color: #12a0a0;
+  background: #12a0a0;
+  color: #fff;
+}
+
+.cap:not(.active) .split-btn {
+  display: none;
+}
+
+.bottom-toolbar .clear-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: rgba(255, 159, 10, 0.45);
+  background: rgba(255, 159, 10, 0.14);
+  color: #ff9f0a;
+  font-weight: 600;
+}
+
+.bottom-toolbar .clear-btn:hover {
+  border-color: #ff9f0a;
+  background: #ff9f0a;
+  color: #1c1000;
+}
+
+.clear-btn svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Start/Stop colors per capture state (data-state is set by renderToggle). */
+.start[data-state='starting'],
+.start[data-state='starting']:hover {
+  background: #c99a2e;
+  color: #1c1000;
+  opacity: 1;
+  cursor: progress;
+}
+
+.start[data-state='live'] {
+  background: #d93a40;
+  color: #fff;
+}
+
+.start[data-state='live']:hover {
+  background: #ef4a50;
+}
+
+.font-size-value {
+  min-width: 22px;
+  color: #a8b5cd;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* Fixed-width labels so switching between ON / OFF / MIC doesn't resize the indicators. */
+.mic-indicator > span,
+.speak-indicator > span {
+  display: inline-block;
+  width: 3.4ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Soundbyte popup floats as a smaller panel over a dimmed window so it reads as a separate layer.
+   The spread shadow is the dim layer: it isn't hit-testable, so clicking outside still closes it. */
+.soundbyte-popover {
+  inset: 0;
+  width: calc(100% - 56px);
+  max-width: 420px;
+  height: min(72%, 560px);
+  margin: auto;
+  border-color: rgba(18, 160, 160, 0.55);
+  box-shadow:
+    0 0 0 100vmax rgba(6, 10, 22, 0.55),
+    0 16px 40px rgba(0, 0, 0, 0.55);
+  animation: popover-in 160ms ease-out;
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .soundbyte-popover {
+    animation: none;
+  }
+}

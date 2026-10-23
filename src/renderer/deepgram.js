@@ -2,7 +2,8 @@ const KEEPALIVE_MS = 8000;
 const CHUNK_MS = 250;
 const MAX_RECONNECTS = 3;
 
-function dominantLanguage(alt, fallback = 'en') {
+// A null fallback lets the renderer keep the current bubble's language instead of guessing English.
+function dominantLanguage(alt, fallback = null) {
   if (alt.languages?.length) return alt.languages[0];
   const counts = {};
   for (const word of alt.words ?? []) {

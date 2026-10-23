@@ -32,7 +32,6 @@ settings.deepgramKey ??= '';
 settings.showTranscription = settings.showTranscription ?? settings.showOriginal ?? true;
 settings.showTranslation = settings.showTranslation ?? true;
 settings.sentenceLines ??= true;
-settings.micMonitor ??= true;
 let session = null;
 let captureStarting = false;
 let currentBlock = null;
@@ -65,11 +64,15 @@ function applyAppearance() {
   const root = document.documentElement.style;
   const rgb = hexToRgb(settings.bgColor);
   root.setProperty('--font-size', `${settings.fontSize}px`);
+  $('fontSizeValue').textContent = settings.fontSize;
+  $('fontDownBtn').disabled = settings.fontSize <= FONT_MIN;
+  $('fontUpBtn').disabled = settings.fontSize >= FONT_MAX;
   root.setProperty('--bg-alpha', '1');
   root.setProperty('--bg-rgb', rgb.join(', '));
   document.body.classList.toggle('light-bg', isLightBackground(rgb));
   document.body.classList.toggle('hide-transcription', !settings.showTranscription);
   document.body.classList.toggle('hide-translation', !settings.showTranslation);
+  document.body.classList.toggle('translator-off', settings.translator === 'off');
   document.body.classList.toggle('paragraphs', !settings.sentenceLines);
   bgColorInput.value = settings.bgColor;
   const translatorNames = {
@@ -212,7 +215,7 @@ function stopMicMonitor() {
   micIndicator.dataset.state = 'unknown';
   micIndicator.classList.remove('speaking');
   micLabel.textContent = 'MIC';
-  micIndicator.title = 'Headset mic: click to start monitoring';
+  micIndicator.title = 'Headset mic';
 }
 
 async function startMicMonitor() {
@@ -231,10 +234,10 @@ async function startMicMonitor() {
     micMeter = createLevelMeter(stream);
     micLastSound = Date.now();
     const [track] = stream.getAudioTracks();
-    micIndicator.title = `Headset mic: ${track.label || 'default input'} · click to stop monitoring`;
+    micIndicator.title = `Headset mic: ${track.label || 'default input'}`;
   } catch (err) {
     if (generation !== micGeneration) return;
-    micIndicator.title = `Mic monitor unavailable: ${err.message || err.name} · click to retry`;
+    micIndicator.title = `Mic monitor unavailable: ${err.message || err.name}`;
   }
 }
 
@@ -246,13 +249,6 @@ function renderMic(now) {
   micIndicator.dataset.state = off ? 'off' : 'on';
   micIndicator.classList.toggle('speaking', !off && peak > MIC_SPEAKING_LEVEL);
   micLabel.textContent = off ? 'OFF' : 'ON';
-}
-
-async function toggleMicMonitor() {
-  const enable = !micStream;
-  if (enable) await startMicMonitor();
-  else stopMicMonitor();
-  settings = await window.captioner.setSettings({ micMonitor: enable });
 }
 
 function pollMeters() {
@@ -270,10 +266,10 @@ const targetFor = (lang) => (baseLang(lang) === 'es' ? 'en' : 'es');
 function createBlock(lang) {
   placeholder.hidden = true;
   const el = document.createElement('div');
-  el.className = 'cap interim';
+  el.className = 'cap interim active';
   el.dataset.lang = baseLang(lang);
   el.innerHTML =
-    '<span class="time"></span><div class="src"><img class="flag" alt="" /><span class="lang"></span><span class="text"></span></div><div class="tr"></div>';
+    '<div class="cap-meta"><span class="time"></span><button type="button" class="split-btn" hidden title="Continue this language in a new bubble">Split</button></div><div class="src"><img class="flag" alt="" /><span class="lang"></span><span class="text"></span></div><div class="tr"></div>';
   el.querySelector('.time').textContent = formatTime(new Date());
   const flag = el.querySelector('.flag');
   const flagSrc = SPEAKER_FLAGS[baseLang(lang)];
@@ -356,6 +352,22 @@ function renderBlock(block) {
 
   fillSentences(block.el.querySelector('.text'), srcItems);
   fillSentences(block.el.querySelector('.tr'), trItems);
+  updateSplitButton(block);
+  scrollToBottom();
+}
+
+// Same-language speech stays in one bubble, so offer a manual split once it gets too tall to follow.
+const SPLIT_THRESHOLD = 0.45; // fraction of the captions area's height
+
+function updateSplitButton(block) {
+  const tooTall = block === currentBlock && block.el.offsetHeight > captionsEl.clientHeight * SPLIT_THRESHOLD;
+  block.el.querySelector('.split-btn').hidden = !tooTall;
+}
+
+function splitBlock(el) {
+  if (currentBlock?.el !== el) return;
+  // Speech still in progress moves to the new bubble on Deepgram's next interim update.
+  commitBlock();
   scrollToBottom();
 }
 
@@ -387,6 +399,11 @@ captionsEl.addEventListener('mouseleave', () => {
 });
 
 captionsEl.addEventListener('click', (e) => {
+  const splitBtn = e.target.closest('.split-btn');
+  if (splitBtn) {
+    splitBlock(splitBtn.closest('.cap'));
+    return;
+  }
   const pair = pairAt(e.target);
   if (!pair || pair === selectedPair) return;
   markPair(selectedPair, 'selected', false);
@@ -406,10 +423,21 @@ function commitBlock() {
   if (currentBlock.segments.length === 0) {
     currentBlock.el.remove();
   } else {
-    currentBlock.el.classList.remove('interim');
+    currentBlock.el.classList.remove('interim', 'active');
     renderBlock(currentBlock);
   }
   currentBlock = null;
+}
+
+// Short fragments ("OK", "sí") are often misdetected, and a missing language says nothing,
+// so only a longer fragment in another language opens a new bubble.
+const MIN_SWITCH_WORDS = 3;
+
+function resolveLang(language, transcript) {
+  const detected = language ? baseLang(language) : null;
+  if (!currentBlock) return detected ?? 'en';
+  if (!detected || detected === currentBlock.lang) return currentBlock.lang;
+  return transcript.split(/\s+/).length < MIN_SWITCH_WORDS ? currentBlock.lang : detected;
 }
 
 async function translateSegment(block, seg) {
@@ -446,10 +474,10 @@ async function translateSegment(block, seg) {
 }
 
 function handleTranscript({ text, language, translation }) {
-  const lang = baseLang(language);
   const transcript = String(text ?? '').trim();
   const translated = typeof translation === 'string' ? translation.trim() : '';
   if (!transcript) return;
+  const lang = resolveLang(language, transcript);
 
   if (text) resetHoldTimer();
   if (currentBlock && currentBlock.lang !== lang) {
@@ -468,12 +496,14 @@ function handleTranscript({ text, language, translation }) {
 
 function handleDeepgramTranscript({ text, language, isFinal, speechFinal }) {
   const transcript = String(text ?? '').trim();
+  // End of a sentence no longer closes the bubble: same-language speech keeps growing the
+  // current one, and only a language change (or Stop) commits it.
   if (!transcript) {
-    if (speechFinal) commitBlock();
+    if (speechFinal) handleUtteranceEnd();
     return;
   }
   resetHoldTimer();
-  const lang = baseLang(language);
+  const lang = resolveLang(language, transcript);
   if (currentBlock && currentBlock.lang !== lang) commitBlock();
   if (!currentBlock) currentBlock = createBlock(lang);
 
@@ -483,7 +513,7 @@ function handleDeepgramTranscript({ text, language, isFinal, speechFinal }) {
     currentBlock.interim = '';
     renderBlock(currentBlock);
     if (seg.tr === undefined) void translateSegment(currentBlock, seg);
-    if (speechFinal) commitBlock();
+    if (speechFinal) handleUtteranceEnd();
   } else {
     currentBlock.interim = transcript;
     renderBlock(currentBlock);
@@ -517,10 +547,20 @@ async function captureSystemAudio() {
   }
 }
 
+const TOGGLE_LABELS = { idle: 'Start', starting: 'Starting…', live: 'Stop' };
+
+// One place derives the Start/Stop button from capture state; CSS colors it per data-state.
+function renderToggle() {
+  const state = captureStarting ? 'starting' : session ? 'live' : 'idle';
+  toggleBtn.dataset.state = state;
+  toggleBtn.textContent = TOGGLE_LABELS[state];
+  toggleBtn.disabled = captureStarting;
+}
+
 async function start() {
   if (session || captureStarting) return;
   captureStarting = true;
-  toggleBtn.disabled = true;
+  renderToggle();
 
   // Pressing Start with unsaved engine choices should use them, not the last saved ones.
   if (formIsDirty()) {
@@ -529,7 +569,7 @@ async function start() {
     } catch (err) {
       setStatus('error', `Could not save settings: ${err.message || 'unknown error'}`);
       captureStarting = false;
-      toggleBtn.disabled = false;
+      renderToggle();
       return;
     }
   }
@@ -539,7 +579,7 @@ async function start() {
     form.deepgramKey.focus();
     setStatus('error', 'Add a Deepgram API key in Engines settings to start.');
     captureStarting = false;
-    toggleBtn.disabled = false;
+    renderToggle();
     return;
   }
 
@@ -549,13 +589,13 @@ async function start() {
       form.transcriptionUrl.focus();
       setStatus('error', 'Add the Whisper WebSocket URL in Engines settings.');
       captureStarting = false;
-      toggleBtn.disabled = false;
+      renderToggle();
       return;
     }
     if (!settings.transcriptionUrl.startsWith('wss://')) {
       setStatus('error', 'The Whisper transcription URL must start with wss://.');
       captureStarting = false;
-      toggleBtn.disabled = false;
+      renderToggle();
       return;
     }
   }
@@ -605,7 +645,7 @@ async function start() {
     if (session?.transcription !== transcription) return;
     resetHoldTimer();
 
-    toggleBtn.textContent = 'Stop';
+    renderToggle();
     overlay.classList.remove('idle');
   } catch (err) {
     if (session) stop({ keepStatus: true });
@@ -615,7 +655,7 @@ async function start() {
     setStatus('error', `Computer audio capture failed: ${err.message || err.name}`);
   } finally {
     captureStarting = false;
-    toggleBtn.disabled = false;
+    renderToggle();
   }
 }
 
@@ -629,7 +669,7 @@ function stop({ keepStatus = false } = {}) {
   systemMeter = null;
   stopHoldTimer();
   commitBlock();
-  toggleBtn.textContent = 'Start';
+  renderToggle();
   overlay.classList.add('idle');
   if (!keepStatus) setStatus('idle', 'Idle');
 }
@@ -722,11 +762,8 @@ form.addEventListener('submit', async (e) => {
 
 toggleBtn.addEventListener('click', () => (session ? stop() : start()));
 speakIndicator.addEventListener('click', () => setMuted(!muted));
-micIndicator.addEventListener('click', () => void toggleMicMonitor());
-// A plugged or unplugged headset changes the default input, so follow it.
-navigator.mediaDevices.addEventListener('devicechange', () => {
-  if (micStream) void startMicMonitor();
-});
+// A plugged or unplugged headset changes the default input, so follow it (this also retries a failed start).
+navigator.mediaDevices.addEventListener('devicechange', () => void startMicMonitor());
 $('clearBtn').addEventListener('click', clearCaptions);
 
 async function changeFontSize(delta) {
@@ -861,4 +898,5 @@ applyAppearance();
 renderHoldTimer();
 overlay.classList.add('idle');
 setInterval(pollMeters, METER_INTERVAL_MS);
-if (settings.micMonitor) void startMicMonitor();
+// Indicator only: monitoring always runs, since there is no longer a click to turn it on.
+void startMicMonitor();
