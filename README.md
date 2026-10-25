@@ -22,6 +22,23 @@ On first launch, expand **Engines**, choose a transcription engine, configure it
 
 To test, play a YouTube video on your computer and press **Start**. The app captures computer/system audio through Electron's loopback capture; it does not listen to your microphone. On macOS, allow the system-audio recording permission prompt. If no captions appear, check **System Settings › Privacy & Security › Screen & System Audio Recording**. In development, the app requesting permission may be your terminal or editor rather than "Live Captioner".
 
+## Access codes (Whisper server)
+
+The Whisper server only accepts clients with a valid access code, entered in **Engines** next to the URL (or prefilled with `CC_PLUS_ACCESS_CODE`). Your Mac holds the master copy of the codes; the pod only receives copies. Run these from `transcription-server/` on your Mac:
+
+```bash
+python server.py add-code "Ana López" --days 30 --email ana@example.com --note "PayPal #123"
+python server.py extend-code "Ana López" --days 30     # renewal: adds to the current expiry date
+python server.py extend-all --days 3                   # make up for an outage to everyone
+python server.py list-codes
+python server.py revoke-code "Ana López"
+python server.py push-codes https://<pod-id>-8000.proxy.runpod.net   # after every change
+```
+
+The server stores only SHA-256 hashes, so a code is shown once at creation; if someone loses it, create a new one and revoke the old one. On a **new pod**, upload `authorized_codes.json` and `admin_token.txt` into `transcription-server/` with Jupyter before starting `server.py`; after that, `push-codes` keeps the pod in sync. Both files are git-ignored: back them up.
+
+`admin.html` (same admin token) shows connected clients and lets you create, renew, and revoke codes, add days to every code at once, and download a backup. Those changes are saved on the server, so run `python server.py pull-codes <url>` to bring them back to your Mac. `push-codes` refuses to overwrite codes that were created or renewed on the server until you pull them (or pass `--force`). The panel also shows usage history (time connected and audio processed per user and per day, peak concurrency, CSV export). The server appends one line per finished session to `transcription-server/sessions.jsonl` (git-ignored, lives on the pod) and keeps the history in memory, so the panel never reads the disk. A **Rendimiento del Servidor** section shows phrase latency (end of speech → caption sent), how many phrases compete for the GPU at once, GPU use (needs `nvidia-ml-py`, installed by `start.sh`), and how much of the processing time goes to language detection. Each phrase only updates in-memory counters; once a minute a summary line is appended to `transcription-server/metrics.jsonl` (git-ignored). **Importar respaldo** merges an `authorized_codes.json` into the server without deleting anything: new codes are added and, for codes on both sides, the later expiry wins.
+
 ## Interpreter tools
 
 The app opens as a compact, right-aligned 452 × 720 window (limited to the available display size). Use the **Saludos**, **Intervenciones**, and **Solicitudes** buttons to open categorized soundbytes. Interpreter name/ID are saved in the quick-phrases popup, and a compact call-notes field appears above the transcript. Use the bottom checkmarks to show/hide transcription and translation. English and Spanish are always detected automatically. Soundbytes and notes can be customized and are saved locally. The hold timer remains in the transcription toolbar.

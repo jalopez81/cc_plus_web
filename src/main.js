@@ -13,12 +13,15 @@ const {
 } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const { translate } = require('./translate');
 
-const SECRET_KEYS = ['deeplKey', 'deepgramKey'];
+const SECRET_KEYS = ['deeplKey', 'deepgramKey', 'accessCode'];
 const DEFAULT_SETTINGS = {
   transcriptionEngine: 'whisper',
   transcriptionUrl: process.env.CC_PLUS_TRANSCRIPTION_URL || '',
+  accessCode: process.env.CC_PLUS_ACCESS_CODE || '',
   deepgramKey: '',
   translator: 'off',
   deeplKey: '',
@@ -325,7 +328,48 @@ function registerDisplayMediaHandler() {
   });
 }
 
+// ---------- updates ----------
+// Temporary updater for users running `npm start` from a git clone: fast-forwards to the tracked branch.
+
+const REPO_DIR = path.join(__dirname, '..');
+const run = promisify(execFile);
+const git = async (...args) => (await run('git', args, { cwd: REPO_DIR, timeout: 60_000 })).stdout.trim();
+
+async function checkForUpdates() {
+  if (app.isPackaged) return { status: 'error', message: 'Updates only work when running from the git checkout.' };
+  try {
+    await git('rev-parse', '--git-dir');
+  } catch {
+    return { status: 'error', message: 'Git is not installed, or this folder is not a git clone.' };
+  }
+  try {
+    const upstream = await git('rev-parse', '--abbrev-ref', '@{u}');
+    if (await git('status', '--porcelain', '--untracked-files=no')) {
+      return { status: 'error', message: 'This copy has local changes; updating could overwrite them.' };
+    }
+    await git('fetch', '--quiet');
+    const behind = Number(await git('rev-list', '--count', 'HEAD..@{u}'));
+    if (behind === 0) return { status: 'current', message: 'You already have the latest version.' };
+
+    const changed = (await git('diff', '--name-only', 'HEAD', '@{u}')).split('\n');
+    await git('merge', '--ff-only', '--quiet', '@{u}');
+    if (changed.some((file) => file === 'package.json' || file === 'package-lock.json')) {
+      // npm is a .cmd script on Windows, which needs a shell to run.
+      await run('npm', ['install', '--no-audit', '--no-fund'], { cwd: REPO_DIR, timeout: 600_000, shell: process.platform === 'win32' });
+    }
+    return { status: 'updated', message: `Updated with ${behind} change(s) from ${upstream}.` };
+  } catch (err) {
+    const detail = (err.stderr || err.message || '').toString().trim().split('\n')[0];
+    return { status: 'error', message: `Update failed: ${detail}` };
+  }
+}
+
 function registerIpc() {
+  ipcMain.handle('app:update', () => checkForUpdates());
+  ipcMain.on('app:relaunch', () => {
+    app.relaunch();
+    app.exit(0);
+  });
   ipcMain.handle('settings:get', () => loadSettings());
   ipcMain.handle('settings:set', (_e, patch) => {
     const next = { ...loadSettings(), ...patch };

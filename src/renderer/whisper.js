@@ -8,8 +8,9 @@ function float32ToInt16(samples) {
 }
 
 export class WhisperStream {
-  constructor({ url, onTranscript, onStatus }) {
+  constructor({ url, accessCode, onTranscript, onStatus }) {
     this.url = url;
+    this.accessCode = accessCode;
     this.onTranscript = onTranscript;
     this.onStatus = onStatus;
     this.ws = null;
@@ -37,7 +38,8 @@ export class WhisperStream {
     }
 
     this.onStatus('connecting', 'Connecting to transcription server…');
-    const ws = new WebSocket(this.url);
+    // Browsers can't set headers on WebSockets, so the access code rides in the subprotocol.
+    const ws = new WebSocket(this.url, ['token', this.accessCode]);
     this.ws = ws;
     ws.binaryType = 'arraybuffer';
 

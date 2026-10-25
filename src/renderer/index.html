@@ -23,6 +23,7 @@
             <button type="button" data-menu="file">File</button>
             <button type="button" data-menu="edit">Edit</button>
             <button type="button" data-menu="view">View</button>
+            <button type="button" id="updateBtn" title="Download the latest version">Actualizar</button>
           </nav>
           <div class="status">
             <span class="dot" id="statusDot" role="status" aria-label="Idle" title="Idle"></span>
@@ -62,6 +63,10 @@
               <label class="engine-input-label" data-engine-for="whisper">
                 <span class="sr-only">Transcription WebSocket URL</span>
                 <input type="url" name="transcriptionUrl" autocomplete="off" placeholder="wss://.../ws/transcribe" />
+              </label>
+              <label class="engine-input-label access-code-label" data-engine-for="whisper">
+                <span class="sr-only">Access code</span>
+                <input type="password" name="accessCode" autocomplete="off" placeholder="Access code" />
               </label>
               <label class="engine-input-label" data-engine-for="deepgram">
                 <span class="sr-only">Deepgram API key</span>

@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 export HF_HOME=/workspace/hf_cache
 
 echo ">>> Instalando dependencias..."
-pip install -q fastapi "uvicorn[standard]" websockets faster-whisper av transformers sentencepiece sacremoses
+pip install -q fastapi "uvicorn[standard]" websockets faster-whisper av transformers sentencepiece sacremoses nvidia-ml-py
 # Si torch ya trae cuBLAS/cuDNN compatibles, pip no los toca
 pip install -q "ctranslate2==4.6.0" nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"
 
@@ -23,4 +23,4 @@ EOF
 export LD_LIBRARY_PATH="$NV_LIBS:${LD_LIBRARY_PATH}"
 
 echo ">>> Arrancando servidor..."
-python server.py 2>&1 | tee server.log
+python -u server.py 2>&1 | tee server.log

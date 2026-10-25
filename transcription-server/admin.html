@@ -27,6 +27,9 @@
             <label class="text-sm font-medium text-gray-300 whitespace-nowrap">URL del Backend:</label>
             <input type="text" id="apiUrl" value="https://wl4u6khi2kn8r7-8000.proxy.runpod.net/api/admin/stats" 
                    class="bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 w-full focus:outline-none focus:border-blue-500">
+            <label class="text-sm font-medium text-gray-300 whitespace-nowrap">Token admin:</label>
+            <input type="password" id="adminToken" placeholder="Se imprime al arrancar server.py"
+                   class="bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 w-64 focus:outline-none focus:border-blue-500">
             <button onclick="actualizarDatos()" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">Actualizar</button>
         </div>
 
@@ -54,6 +57,261 @@
             </div>
         </div>
 
+        <!-- Clientes conectados -->
+        <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
+            <div class="flex justify-between items-baseline mb-4">
+                <h3 class="text-lg font-semibold text-white">Clientes Conectados</h3>
+                <span class="text-xs text-gray-500" id="codesInfo"></span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                    <thead class="text-xs uppercase text-gray-400 border-b border-gray-700">
+                        <tr>
+                            <th class="py-2 pr-4">#</th>
+                            <th class="py-2 pr-4">Nombre</th>
+                            <th class="py-2 pr-4">Código (hash)</th>
+                            <th class="py-2 pr-4">IP</th>
+                            <th class="py-2 pr-4">Vence</th>
+                            <th class="py-2 pr-4">Conectado</th>
+                            <th class="py-2 pr-4">Inactivo</th>
+                            <th class="py-2 pr-4">Segmentos</th>
+                            <th class="py-2">Audio</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clientsBody">
+                        <tr><td colspan="9" class="py-4 text-gray-500">Sin clientes conectados.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Códigos de acceso (suscripciones) -->
+        <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
+            <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
+                <h3 class="text-lg font-semibold text-white">Códigos de Acceso</h3>
+                <div class="flex gap-2">
+                    <button onclick="abrirDialogo('all')" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">Compensar días a todos</button>
+                    <button onclick="descargarRespaldo()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">Descargar respaldo</button>
+                    <button onclick="document.getElementById('importFile').click()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">Importar respaldo</button>
+                    <input type="file" id="importFile" accept=".json,application/json" class="hidden">
+                </div>
+            </div>
+
+            <p id="codesMsg" class="hidden text-sm rounded-lg px-3 py-2 mb-4"></p>
+
+            <!-- Crear código -->
+            <form id="createForm" class="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4">
+                <input name="name" required placeholder="Nombre del cliente *"
+                       class="md:col-span-3 bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                <input name="email" type="email" placeholder="Email"
+                       class="md:col-span-3 bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                <select name="days" class="md:col-span-2 bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                    <option value="7">7 días (prueba)</option>
+                    <option value="30" selected>1 mes</option>
+                    <option value="90">3 meses</option>
+                    <option value="180">6 meses</option>
+                    <option value="365">1 año</option>
+                    <option value="0">Sin caducidad</option>
+                </select>
+                <input name="note" placeholder="Nota (p. ej. PayPal #123)"
+                       class="md:col-span-3 bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                <button class="md:col-span-1 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold px-3 py-2 rounded-lg transition">Crear</button>
+            </form>
+
+            <!-- Código recién creado: se muestra una sola vez -->
+            <div id="newCodeBox" class="hidden bg-green-900/30 border border-green-700 rounded-lg p-4 mb-4">
+                <p class="text-sm text-green-300 mb-2"><span id="newCodeLabel"></span> — cópialo y envíaselo ahora: <strong>no se vuelve a mostrar</strong>.</p>
+                <div class="flex flex-wrap gap-2 items-center">
+                    <code id="newCode" class="bg-gray-900 text-green-300 font-mono text-base px-3 py-2 rounded-lg select-all break-all"></code>
+                    <button onclick="copiarCodigo()" id="copyBtn" class="bg-green-600 hover:bg-green-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">Copiar</button>
+                    <button onclick="document.getElementById('newCodeBox').classList.add('hidden')" class="text-gray-400 hover:text-white text-xs px-3 py-2">Cerrar</button>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                    <thead class="text-xs uppercase text-gray-400 border-b border-gray-700">
+                        <tr>
+                            <th class="py-2 pr-4">Nombre</th>
+                            <th class="py-2 pr-4">Email</th>
+                            <th class="py-2 pr-4">Código (hash)</th>
+                            <th class="py-2 pr-4">Estado</th>
+                            <th class="py-2 pr-4">Uso total</th>
+                            <th class="py-2 pr-4">Última vez</th>
+                            <th class="py-2 pr-4">Nota</th>
+                            <th class="py-2 text-right">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="codesBody">
+                        <tr><td colspan="8" class="py-4 text-gray-500">Sin códigos.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <p class="text-xs text-gray-500 mt-3">Los cambios hechos aquí viven en el servidor. Para tenerlos en tu Mac: <code>python server.py pull-codes &lt;url&gt;</code> o «Descargar respaldo».</p>
+        </div>
+
+        <!-- Diálogo para renovar un código o compensar a todos -->
+        <dialog id="daysDialog" class="bg-gray-800 text-gray-100 rounded-xl border border-gray-700 p-6 w-full max-w-sm backdrop:bg-black/60">
+            <form method="dialog" id="daysForm" class="space-y-4">
+                <h4 class="text-lg font-semibold text-white" id="daysTitle"></h4>
+                <label class="block text-sm text-gray-300">Días a añadir
+                    <input name="days" type="number" min="1" max="3650" value="30" required
+                           class="mt-1 w-full bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                </label>
+                <label class="block text-sm text-gray-300" id="daysNoteLabel">Nota del pago
+                    <input name="note" placeholder="p. ej. PayPal #456"
+                           class="mt-1 w-full bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                </label>
+                <p class="text-xs text-gray-500" id="daysHelp"></p>
+                <div class="flex justify-end gap-2">
+                    <button value="cancel" formnovalidate class="text-gray-400 hover:text-white text-sm px-3 py-2">Cancelar</button>
+                    <button value="ok" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">Aplicar</button>
+                </div>
+            </form>
+        </dialog>
+
+        <!-- Uso del servicio (historial de sesiones) -->
+        <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
+            <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
+                <div>
+                    <h3 class="text-lg font-semibold text-white">Uso del Servicio</h3>
+                    <p class="text-xs text-gray-500">Tiempo conectado = sesión abierta en la app · Audio = voz que Whisper llegó a procesar (carga real de GPU)</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <select id="usageUser" class="bg-gray-900 border border-gray-700 text-gray-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                        <option value="">Todos los usuarios</option>
+                    </select>
+                    <select id="usageMinDur" class="bg-gray-900 border border-gray-700 text-gray-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                        <option value="0">Cualquier duración</option>
+                        <option value="60">Sesiones ≥ 1 min</option>
+                        <option value="300">Sesiones ≥ 5 min</option>
+                        <option value="1800">Sesiones ≥ 30 min</option>
+                    </select>
+                    <select id="usageDays" class="bg-gray-900 border border-gray-700 text-gray-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                        <option value="7">Últimos 7 días</option>
+                        <option value="30" selected>Últimos 30 días</option>
+                        <option value="90">Últimos 90 días</option>
+                    </select>
+                    <button onclick="actualizarUso()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">Actualizar</button>
+                    <button onclick="exportarCsv()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">Exportar CSV</button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6" id="usageTiles"></div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                    <h4 class="text-sm font-semibold text-gray-300 mb-2">Horas conectadas por día</h4>
+                    <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-xs uppercase text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800">
+                                <tr>
+                                    <th class="py-2 pr-3">Día</th>
+                                    <th class="py-2 pr-3 w-1/2">Conectado</th>
+                                    <th class="py-2 pr-3 text-right">Audio</th>
+                                    <th class="py-2 pr-3 text-right">Usuarios</th>
+                                    <th class="py-2 text-right">Pico</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dailyBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div>
+                    <h4 class="text-sm font-semibold text-gray-300 mb-2">Por usuario en el periodo <span class="text-xs font-normal text-gray-500">· clic en una fila para filtrar</span></h4>
+                    <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-xs uppercase text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800">
+                                <tr>
+                                    <th class="py-2 pr-3">Nombre</th>
+                                    <th class="py-2 pr-3 text-right">Sesiones</th>
+                                    <th class="py-2 pr-3 text-right">Conectado</th>
+                                    <th class="py-2 pr-3 text-right">Audio</th>
+                                    <th class="py-2 text-right">Días activos</th>
+                                </tr>
+                            </thead>
+                            <tbody id="perUserBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6">
+                <div class="flex justify-between items-baseline mb-2">
+                    <h4 class="text-sm font-semibold text-gray-300">Sesiones</h4>
+                    <span class="text-xs text-gray-500" id="sessionsInfo"></span>
+                </div>
+                <div class="overflow-x-auto max-h-80 overflow-y-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs uppercase text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800">
+                            <tr>
+                                <th class="py-2 pr-3">Nombre</th>
+                                <th class="py-2 pr-3">Inicio</th>
+                                <th class="py-2 pr-3 text-right">Conectado</th>
+                                <th class="py-2 pr-3 text-right">Audio</th>
+                                <th class="py-2 text-right">Segmentos</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sessionsBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rendimiento del servidor (métricas por minuto) -->
+        <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
+            <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
+                <div>
+                    <h3 class="text-lg font-semibold text-white">Rendimiento del Servidor</h3>
+                    <p class="text-xs text-gray-500">Latencia = desde que termina la frase hasta que el subtítulo sale del servidor · «Hablando a la vez» = frases procesándose al mismo tiempo en la GPU</p>
+                </div>
+                <select id="metricsHours" class="bg-gray-900 border border-gray-700 text-gray-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                    <option value="1">Última hora</option>
+                    <option value="24" selected>Últimas 24 horas</option>
+                    <option value="168">Últimos 7 días</option>
+                </select>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6" id="metricsTiles"></div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                    <h4 class="text-sm font-semibold text-gray-300 mb-1">Capacidad: latencia según cuántos hablan a la vez</h4>
+                    <p class="text-xs text-gray-500 mb-2">Si la p95 sube al aumentar el solapamiento, la GPU es el cuello de botella. Por encima de 2 s los subtítulos se sienten tarde.</p>
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs uppercase text-gray-400 border-b border-gray-700">
+                            <tr>
+                                <th class="py-2 pr-3">A la vez</th>
+                                <th class="py-2 pr-3 text-right">Frases</th>
+                                <th class="py-2 pr-3 text-right">Típica (p50)</th>
+                                <th class="py-2 pr-3 w-2/5">Peor 5% (p95)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="capacityBody"></tbody>
+                    </table>
+                </div>
+                <div>
+                    <h4 class="text-sm font-semibold text-gray-300 mb-2">Por hora</h4>
+                    <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-xs uppercase text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800">
+                                <tr>
+                                    <th class="py-2 pr-3">Hora</th>
+                                    <th class="py-2 pr-3 text-right">Conect.</th>
+                                    <th class="py-2 pr-3 text-right">Hablando</th>
+                                    <th class="py-2 pr-3 text-right">Frases</th>
+                                    <th class="py-2 pr-3 text-right">p95</th>
+                                    <th class="py-2 pr-3 text-right">GPU</th>
+                                    <th class="py-2 text-right">Errores</th>
+                                </tr>
+                            </thead>
+                            <tbody id="hourlyBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Sección de Registros / Actividad Reciente -->
         <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
             <h3 class="text-lg font-semibold text-white mb-4">Registro de Estado del Servidor</h3>
@@ -64,12 +322,563 @@
     </div>
 
     <script>
+        const tokenInput = document.getElementById('adminToken');
+        try { tokenInput.value = localStorage.getItem('adminToken') || ''; } catch {}
+        tokenInput.addEventListener('change', () => {
+            try { localStorage.setItem('adminToken', tokenInput.value.trim()); } catch {}
+            actualizarDatos();
+        });
+
+        const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+        function duracion(segundos) {
+            const h = Math.floor(segundos / 3600), m = Math.floor((segundos % 3600) / 60), s = segundos % 60;
+            return h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`;
+        }
+
+        function renderClientes(clients) {
+            const body = document.getElementById('clientsBody');
+            if (!clients.length) {
+                body.innerHTML = '<tr><td colspan="9" class="py-4 text-gray-500">Sin clientes conectados.</td></tr>';
+                return;
+            }
+            body.innerHTML = clients.map((c) => `
+                <tr class="border-b border-gray-700/50">
+                    <td class="py-2 pr-4 text-gray-500">${c.id}</td>
+                    <td class="py-2 pr-4 font-semibold text-white">${escapeHtml(c.name)}</td>
+                    <td class="py-2 pr-4 font-mono text-xs text-gray-400">${escapeHtml(c.code_hash)}…</td>
+                    <td class="py-2 pr-4 font-mono text-xs" title="${escapeHtml(c.user_agent)}">${escapeHtml(c.ip)}</td>
+                    <td class="py-2 pr-4">${c.expires ? escapeHtml(c.expires.slice(0, 10)) : '—'}</td>
+                    <td class="py-2 pr-4">${duracion(c.connected_s)}</td>
+                    <td class="py-2 pr-4 ${c.idle_s > 300 ? 'text-yellow-400' : ''}">${duracion(c.idle_s)}</td>
+                    <td class="py-2 pr-4">${c.segments}</td>
+                    <td class="py-2">${duracion(Math.round(c.audio_s))}</td>
+                </tr>`).join('');
+        }
+
+        // La URL configurada es la de /api/admin/stats; las demás rutas cuelgan de la misma base.
+        const apiBase = () => document.getElementById('apiUrl').value.trim().replace(/\/api\/admin\/stats\/?$/, '');
+
+        const AVISO_VERSION = 'el servidor no reconoce esta acción: ¿el pod tiene la última versión de server.py? (actualízalo y reinícialo)';
+
+        async function api(path, method = 'GET', body) {
+            let response;
+            try {
+                response = await fetch(apiBase() + path, {
+                    method,
+                    headers: { Authorization: `Bearer ${tokenInput.value.trim()}`, 'Content-Type': 'application/json' },
+                    body: body === undefined ? undefined : JSON.stringify(body),
+                });
+            } catch {
+                // Un servidor antiguo rechaza PUT/POST/DELETE en el CORS y el navegador solo dice "Failed to fetch".
+                throw new Error(method === 'GET' ? 'no se pudo conectar con el servidor' : `no se pudo conectar, o ${AVISO_VERSION}`);
+            }
+            const data = await response.json().catch(() => ({}));
+            if (response.status === 404 || response.status === 405) throw new Error(AVISO_VERSION);
+            if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+            return data;
+        }
+
+        // Resultado de las acciones sobre códigos, visible junto a los botones (además del registro de abajo).
+        let avisoTimeout;
+        function avisoCodigos(texto, error = false) {
+            const el = document.getElementById('codesMsg');
+            el.innerText = texto;
+            el.className = `text-sm rounded-lg px-3 py-2 mb-4 border ${error ? 'bg-red-900/30 border-red-700 text-red-300' : 'bg-green-900/30 border-green-700 text-green-300'}`;
+            clearTimeout(avisoTimeout);
+            avisoTimeout = setTimeout(() => el.classList.add('hidden'), error ? 20000 : 8000);
+            log(texto, error);
+        }
+
+        function log(texto, error = false) {
+            const logContainer = document.getElementById('logContainer');
+            logContainer.innerHTML += `<div${error ? ' style="color: #ff6b6b;"' : ''}>[${new Date().toLocaleTimeString()}] ${escapeHtml(texto)}</div>`;
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        let codigosActuales = [];
+        let usoActual = { per_code: {}, sessions: [] };
+
+        const horas = (segundos) => (segundos / 3600).toFixed(segundos < 36000 ? 1 : 0) + ' h';
+
+        function usoCodigo(hash) {
+            const t = usoActual.per_code[hash];
+            if (!t) return '<span class="text-gray-500">sin uso</span>';
+            return `${duracion(t.connected_s)} <span class="text-gray-500">· ${t.sessions} ses. · audio ${duracion(Math.round(t.audio_s))}</span>`;
+        }
+
+        function ultimaVez(hash) {
+            const t = usoActual.per_code[hash];
+            if (!t) return '—';
+            if (clientesConectados.has(hash.slice(0, 12))) return '<span class="text-green-400">conectado ahora</span>';
+            return new Date(t.last_seen * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+        }
+        let clientesConectados = new Set();
+
+        const claveDia = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+        // Agrupa en días de la zona horaria local; una sesión que cruza medianoche se reparte entre ambos días.
+        function calcularUso(sessions, dias) {
+            const ahora = Date.now() / 1000;
+            const desde = ahora - dias * 86400;
+            const porDia = new Map();
+            for (let i = dias - 1; i >= 0; i--) {
+                const d = new Date((ahora - i * 86400) * 1000);
+                porDia.set(claveDia(d), { connected: 0, audio: 0, usuarios: new Set(), eventos: [] });
+            }
+            const porUsuario = new Map();
+            const eventos = [];
+            for (const x of sessions) {
+                const inicio = Math.max(x.start, desde), fin = Math.min(x.end, ahora);
+                if (fin <= inicio) continue;
+                const fraccionAudio = x.audio_s / Math.max(1, x.end - x.start);
+                eventos.push([inicio, 1], [fin, -1]);
+                const u = porUsuario.get(x.code_hash) ?? { hash: x.code_hash, name: x.name, sesiones: 0, connected: 0, audio: 0, dias: new Set() };
+                u.sesiones += 1;
+                let t = inicio;
+                while (t < fin) {
+                    const d = new Date(t * 1000);
+                    const medianoche = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime() / 1000;
+                    const tramoFin = Math.min(fin, medianoche);
+                    const dia = porDia.get(claveDia(d));
+                    if (dia) {
+                        dia.connected += tramoFin - t;
+                        dia.audio += (tramoFin - t) * fraccionAudio;
+                        dia.usuarios.add(x.code_hash);
+                        dia.eventos.push([t, 1], [tramoFin, -1]);
+                    }
+                    u.connected += tramoFin - t;
+                    u.audio += (tramoFin - t) * fraccionAudio;
+                    u.dias.add(claveDia(d));
+                    t = tramoFin;
+                }
+                porUsuario.set(x.code_hash, u);
+            }
+            // Pico de conexiones simultáneas: barrido de eventos (las salidas antes que las entradas en el mismo segundo).
+            const pico = (evs) => {
+                let actual = 0, max = 0;
+                for (const [, delta] of evs.sort((a, b) => a[0] - b[0] || a[1] - b[1])) max = Math.max(max, actual += delta);
+                return max;
+            };
+            for (const dia of porDia.values()) dia.pico = pico(dia.eventos);
+            return { porDia, porUsuario, pico: pico(eventos), sesiones: sessions.filter((x) => x.end >= desde).length };
+        }
+
+        // Sesiones que pasan los filtros de usuario y duración mínima (el periodo lo aplica el servidor y calcularUso).
+        function sesionesFiltradas() {
+            const usuario = document.getElementById('usageUser').value;
+            const minimo = Number(document.getElementById('usageMinDur').value);
+            return usoActual.sessions.filter((x) => (!usuario || x.code_hash === usuario) && x.end - x.start >= minimo);
+        }
+
+        // Opciones del filtro: códigos actuales más los que solo aparecen en el historial (p. ej. borrados).
+        function renderFiltroUsuarios() {
+            const select = document.getElementById('usageUser');
+            const nombres = new Map(usoActual.sessions.map((x) => [x.code_hash, x.name]));
+            for (const c of codigosActuales) nombres.set(c.code_hash, c.name);
+            const actual = select.value;
+            select.innerHTML = '<option value="">Todos los usuarios</option>' + [...nombres.entries()]
+                .sort((a, b) => a[1].localeCompare(b[1]))
+                .map(([hash, nombre]) => `<option value="${escapeHtml(hash)}">${escapeHtml(nombre)}</option>`).join('');
+            select.value = nombres.has(actual) ? actual : '';
+        }
+
+        function filtrarUsuario(hash) {
+            const select = document.getElementById('usageUser');
+            select.value = select.value === hash ? '' : hash;
+            renderUso();
+        }
+
+        function renderUso() {
+            renderFiltroUsuarios();
+            const dias = Number(document.getElementById('usageDays').value);
+            const filtradas = sesionesFiltradas();
+            const { porDia, porUsuario, pico, sesiones } = calcularUso(filtradas, dias);
+            const totalConectado = [...porUsuario.values()].reduce((a, u) => a + u.connected, 0);
+            const totalAudio = [...porUsuario.values()].reduce((a, u) => a + u.audio, 0);
+
+            const tile = (titulo, valor, nota) => `
+                <div class="bg-gray-900 p-4 rounded-lg">
+                    <p class="text-xs text-gray-400">${titulo}</p>
+                    <p class="text-2xl font-bold text-white mt-1">${valor}</p>
+                    <p class="text-xs text-gray-500 mt-1">${nota}</p>
+                </div>`;
+            document.getElementById('usageTiles').innerHTML =
+                tile('Sesiones', sesiones, `en ${dias} días`) +
+                tile('Usuarios activos', porUsuario.size, `de ${codigosActuales.length} códigos`) +
+                tile('Tiempo conectado', horas(totalConectado), `${horas(totalConectado / dias)} / día`) +
+                tile('Audio procesado', horas(totalAudio), totalConectado ? `${Math.round((100 * totalAudio) / totalConectado)}% del tiempo conectado` : '—') +
+                tile('Pico simultáneo', pico, 'conexiones a la vez');
+
+            const filas = [...porDia.entries()].reverse();
+            const maximo = Math.max(1, ...filas.map(([, d]) => d.connected));
+            document.getElementById('dailyBody').innerHTML = filas.map(([clave, d]) => {
+                const [a, m, dd] = clave.split('-').map(Number);
+                const etiqueta = new Date(a, m - 1, dd).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+                const ancho = (100 * d.connected) / maximo;
+                const detalle = `${etiqueta}: ${horas(d.connected)} conectadas, ${horas(d.audio)} de audio, ${d.usuarios.size} usuario(s), pico ${d.pico}`;
+                return `
+                    <tr class="border-b border-gray-700/50 hover:bg-gray-700/40" title="${escapeHtml(detalle)}">
+                        <td class="py-1.5 pr-3 text-gray-400 whitespace-nowrap">${escapeHtml(etiqueta)}</td>
+                        <td class="py-1.5 pr-3">
+                            <div class="flex items-center gap-2">
+                                <div class="h-3 bg-blue-400 rounded-r" style="width: ${ancho}%; min-width: ${d.connected ? 2 : 0}px"></div>
+                                <span class="text-xs text-gray-300 whitespace-nowrap">${d.connected ? horas(d.connected) : ''}</span>
+                            </div>
+                        </td>
+                        <td class="py-1.5 pr-3 text-right text-gray-400">${d.audio ? horas(d.audio) : '—'}</td>
+                        <td class="py-1.5 pr-3 text-right">${d.usuarios.size || '—'}</td>
+                        <td class="py-1.5 text-right">${d.pico || '—'}</td>
+                    </tr>`;
+            }).join('');
+
+            const usuarios = [...porUsuario.values()].sort((a, b) => b.connected - a.connected);
+            const filtroUsuario = document.getElementById('usageUser').value;
+            document.getElementById('perUserBody').innerHTML = usuarios.length ? usuarios.map((u) => `
+                <tr class="border-b border-gray-700/50 cursor-pointer hover:bg-gray-700/40 ${u.hash === filtroUsuario ? 'bg-blue-900/30' : ''}" onclick="filtrarUsuario('${escapeHtml(u.hash)}')">
+                    <td class="py-1.5 pr-3 font-semibold text-white">${escapeHtml(u.name)}</td>
+                    <td class="py-1.5 pr-3 text-right">${u.sesiones}</td>
+                    <td class="py-1.5 pr-3 text-right">${horas(u.connected)}</td>
+                    <td class="py-1.5 pr-3 text-right text-gray-400">${horas(u.audio)}</td>
+                    <td class="py-1.5 text-right">${u.dias.size}</td>
+                </tr>`).join('') : '<tr><td colspan="5" class="py-4 text-gray-500">Sin uso en este periodo.</td></tr>';
+
+            const desde = Date.now() / 1000 - dias * 86400;
+            const lista = filtradas.filter((x) => x.end >= desde).sort((a, b) => b.start - a.start);
+            const LIMITE = 300;
+            document.getElementById('sessionsInfo').innerText = lista.length > LIMITE ? `mostrando las ${LIMITE} más recientes de ${lista.length}` : `${lista.length} sesiones`;
+            document.getElementById('sessionsBody').innerHTML = lista.length ? lista.slice(0, LIMITE).map((x) => `
+                <tr class="border-b border-gray-700/50">
+                    <td class="py-1.5 pr-3 font-semibold text-white">${escapeHtml(x.name)}</td>
+                    <td class="py-1.5 pr-3 text-gray-400 whitespace-nowrap">${new Date(x.start * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td>
+                    <td class="py-1.5 pr-3 text-right">${x.live ? '<span class="text-green-400">en curso · </span>' : ''}${duracion(x.end - x.start)}</td>
+                    <td class="py-1.5 pr-3 text-right text-gray-400">${duracion(Math.round(x.audio_s))}</td>
+                    <td class="py-1.5 text-right">${x.segments}</td>
+                </tr>`).join('') : '<tr><td colspan="5" class="py-4 text-gray-500">Sin sesiones con estos filtros.</td></tr>';
+        }
+
+        document.getElementById('usageDays').addEventListener('change', () => actualizarUso());
+        document.getElementById('usageUser').addEventListener('change', () => renderUso());
+        document.getElementById('usageMinDur').addEventListener('change', () => renderUso());
+
+        // ---------- rendimiento ----------
+        const LIMITE_LATENCIA = 2; // s; a partir de aquí el subtítulo se percibe atrasado
+        let metricasActuales = { lat_bins: [], minutes: [] };
+        let ultimasMetricas = 0;
+
+        const sumarHist = (a, b) => (a.length ? a.map((v, i) => v + (b[i] || 0)) : [...b]);
+
+        // Percentil aproximado a partir del histograma: límite superior del cubo donde cae.
+        function percentil(hist, q) {
+            const total = hist.reduce((a, b) => a + b, 0);
+            if (!total) return null;
+            let acumulado = 0;
+            for (let i = 0; i < hist.length; i++) {
+                acumulado += hist[i];
+                if (acumulado >= q * total) return i < metricasActuales.lat_bins.length ? metricasActuales.lat_bins[i] : Infinity;
+            }
+            return Infinity;
+        }
+        const fmtLat = (v) => (v === null ? '—' : v === Infinity ? `> ${metricasActuales.lat_bins.at(-1)} s` : `≤ ${v} s`);
+        const lenta = (v) => v !== null && v > LIMITE_LATENCIA;
+
+        function agregar(minutos) {
+            const r = { segments: 0, audio: 0, proc: 0, detect: 0, errors: 0, connected: 0, speakers: 0, maxInFlight: 0, hist: [], gpu: [], porConc: {} };
+            for (const m of minutos) {
+                r.segments += m.segments; r.audio += m.audio_s; r.proc += m.proc_s; r.detect += m.detect_s; r.errors += m.errors;
+                r.connected = Math.max(r.connected, m.connected);
+                r.speakers = Math.max(r.speakers, m.speakers);
+                r.maxInFlight = Math.max(r.maxInFlight, m.max_in_flight);
+                if (m.gpu_util !== null) r.gpu.push(m.gpu_util);
+                for (const [n, h] of Object.entries(m.by_conc)) {
+                    r.porConc[n] = sumarHist(r.porConc[n] || [], h);
+                    r.hist = sumarHist(r.hist, h);
+                }
+            }
+            r.gpuProm = r.gpu.length ? Math.round(r.gpu.reduce((a, b) => a + b, 0) / r.gpu.length) : null;
+            return r;
+        }
+
+        function renderMetricas() {
+            const horas = Number(document.getElementById('metricsHours').value);
+            const total = agregar(metricasActuales.minutes);
+            const p95 = percentil(total.hist, 0.95);
+            const tile = (titulo, valor, nota, alerta = false) => `
+                <div class="bg-gray-900 p-4 rounded-lg">
+                    <p class="text-xs text-gray-400">${titulo}</p>
+                    <p class="text-2xl font-bold text-white mt-1">${valor}</p>
+                    <p class="text-xs mt-1 ${alerta ? 'text-yellow-400' : 'text-gray-500'}">${nota}</p>
+                </div>`;
+            document.getElementById('metricsTiles').innerHTML =
+                tile('Latencia p95', fmtLat(p95), lenta(p95) ? '⚠ por encima de ' + LIMITE_LATENCIA + ' s' : `típica ${fmtLat(percentil(total.hist, 0.5))}`, lenta(p95)) +
+                tile('Máx. hablando a la vez', total.maxInFlight, `${total.speakers} usuarios distintos en un minuto`) +
+                tile('Frases procesadas', total.segments.toLocaleString(), `${total.errors} errores`, total.errors > 0) +
+                tile('Uso de GPU', total.gpuProm === null ? '—' : `${total.gpuProm}%`, metricasActuales.gpu_available ? 'promedio' : 'instala nvidia-ml-py') +
+                tile('GPU / audio', total.audio ? `${((100 * total.proc) / total.audio).toFixed(0)}%` : '—', 'tiempo de proceso por segundo de voz') +
+                tile('Peso de detectar idioma', total.proc ? `${((100 * total.detect) / total.proc).toFixed(0)}%` : '—', 'del tiempo de proceso');
+
+            const niveles = Object.keys(total.porConc).map(Number).sort((a, b) => a - b);
+            const maxBins = metricasActuales.lat_bins.length;
+            document.getElementById('capacityBody').innerHTML = niveles.length ? niveles.map((n) => {
+                const h = total.porConc[n];
+                const p50 = percentil(h, 0.5), p95n = percentil(h, 0.95);
+                const idx = p95n === Infinity ? maxBins : metricasActuales.lat_bins.indexOf(p95n);
+                const ancho = (100 * (idx + 1)) / (maxBins + 1);
+                return `
+                    <tr class="border-b border-gray-700/50" title="${n} a la vez: ${h.reduce((a, b) => a + b, 0)} frases, p50 ${fmtLat(p50)}, p95 ${fmtLat(p95n)}">
+                        <td class="py-1.5 pr-3 font-semibold">${n}</td>
+                        <td class="py-1.5 pr-3 text-right text-gray-400">${h.reduce((a, b) => a + b, 0).toLocaleString()}</td>
+                        <td class="py-1.5 pr-3 text-right">${fmtLat(p50)}</td>
+                        <td class="py-1.5 pr-3">
+                            <div class="flex items-center gap-2">
+                                <div class="h-3 bg-blue-400 rounded-r" style="width: ${ancho}%"></div>
+                                <span class="text-xs whitespace-nowrap ${lenta(p95n) ? 'text-yellow-400' : 'text-gray-300'}">${lenta(p95n) ? '⚠ ' : ''}${fmtLat(p95n)}</span>
+                            </div>
+                        </td>
+                    </tr>`;
+            }).join('') : '<tr><td colspan="4" class="py-4 text-gray-500">Sin frases en este periodo.</td></tr>';
+
+            const porHora = new Map();
+            for (const m of metricasActuales.minutes) {
+                const d = new Date(m.ts * 1000);
+                d.setMinutes(0, 0, 0);
+                const clave = d.getTime();
+                if (!porHora.has(clave)) porHora.set(clave, []);
+                porHora.get(clave).push(m);
+            }
+            const filas = [...porHora.entries()].sort((a, b) => b[0] - a[0]);
+            document.getElementById('hourlyBody').innerHTML = filas.length ? filas.map(([clave, ms]) => {
+                const r = agregar(ms);
+                const p = percentil(r.hist, 0.95);
+                const etiqueta = new Date(clave).toLocaleString([], horas > 24 ? { weekday: 'short', hour: '2-digit', minute: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
+                return `
+                    <tr class="border-b border-gray-700/50 hover:bg-gray-700/40">
+                        <td class="py-1.5 pr-3 text-gray-400 whitespace-nowrap">${escapeHtml(etiqueta)}</td>
+                        <td class="py-1.5 pr-3 text-right">${r.connected || '—'}</td>
+                        <td class="py-1.5 pr-3 text-right">${r.maxInFlight || '—'}</td>
+                        <td class="py-1.5 pr-3 text-right">${r.segments || '—'}</td>
+                        <td class="py-1.5 pr-3 text-right ${lenta(p) ? 'text-yellow-400' : ''}">${lenta(p) ? '⚠ ' : ''}${fmtLat(p)}</td>
+                        <td class="py-1.5 pr-3 text-right text-gray-400">${r.gpuProm === null ? '—' : r.gpuProm + '%'}</td>
+                        <td class="py-1.5 text-right ${r.errors ? 'text-red-400' : 'text-gray-500'}">${r.errors || '—'}</td>
+                    </tr>`;
+            }).join('') : '<tr><td colspan="7" class="py-4 text-gray-500">Aún no hay métricas (se guardan cada minuto).</td></tr>';
+        }
+
+        async function actualizarMetricas() {
+            ultimasMetricas = Date.now();
+            try {
+                metricasActuales = await api(`/api/admin/metrics?hours=${document.getElementById('metricsHours').value}`);
+                renderMetricas();
+            } catch (err) {
+                log(`No se pudieron leer las métricas: ${err.message}`, true);
+            }
+        }
+        document.getElementById('metricsHours').addEventListener('change', () => actualizarMetricas());
+
+        let ultimoUso = 0;
+        async function actualizarUso() {
+            ultimoUso = Date.now();
+            try {
+                usoActual = await api(`/api/admin/usage?days=${document.getElementById('usageDays').value}`);
+                renderUso();
+                renderCodigos(codigosActuales);
+            } catch (err) {
+                log(`No se pudo leer el uso: ${err.message}`, true);
+            }
+        }
+
+        function exportarCsv() {
+            const fecha = (t) => new Date(t * 1000).toISOString();
+            const filas = [['nombre', 'codigo_hash', 'inicio', 'fin', 'minutos_conectado', 'minutos_audio', 'segmentos', 'en_curso']];
+            for (const x of sesionesFiltradas()) {
+                filas.push([x.name, x.code_hash, fecha(x.start), fecha(x.end), ((x.end - x.start) / 60).toFixed(1),
+                    (x.audio_s / 60).toFixed(1), x.segments, x.live ? 'si' : 'no']);
+            }
+            const csv = filas.map((f) => f.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+            link.download = `sesiones-${claveDia(new Date())}.csv`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        }
+
+        function renderCodigos(codes) {
+            codigosActuales = codes;
+            const body = document.getElementById('codesBody');
+            if (!codes.length) {
+                body.innerHTML = '<tr><td colspan="8" class="py-4 text-gray-500">Sin códigos.</td></tr>';
+                return;
+            }
+            codes.sort((a, b) => (a.expires || '9999').localeCompare(b.expires || '9999'));
+            body.innerHTML = codes.map((c) => `
+                <tr class="border-b border-gray-700/50">
+                    <td class="py-2 pr-4 font-semibold text-white">${escapeHtml(c.name)}</td>
+                    <td class="py-2 pr-4 text-gray-400">${escapeHtml(c.email || '—')}</td>
+                    <td class="py-2 pr-4 font-mono text-xs text-gray-400">${escapeHtml(c.code_hash)}…</td>
+                    <td class="py-2 pr-4 ${c.valid ? 'text-green-400' : 'text-red-400'}">${escapeHtml(c.status)}</td>
+                    <td class="py-2 pr-4 whitespace-nowrap">${usoCodigo(c.hash)}</td>
+                    <td class="py-2 pr-4 text-gray-400 whitespace-nowrap">${ultimaVez(c.hash)}</td>
+                    <td class="py-2 pr-4 text-gray-400">${escapeHtml(c.note || '')}</td>
+                    <td class="py-2 text-right whitespace-nowrap">
+                        <button onclick="abrirDialogo('${c.hash}')" class="text-blue-400 hover:text-blue-300 text-xs font-semibold px-2">Renovar</button>
+                        <button onclick="revocar('${c.hash}')" class="text-red-400 hover:text-red-300 text-xs font-semibold px-2">Revocar</button>
+                    </td>
+                </tr>`).join('');
+        }
+
+        document.getElementById('createForm').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const form = event.target;
+            const datos = {
+                name: form.name.value.trim(),
+                email: form.email.value.trim(),
+                days: Number(form.days.value),
+                note: form.note.value.trim(),
+            };
+            try {
+                const res = await api('/api/admin/codes', 'POST', datos);
+                document.getElementById('newCode').innerText = res.code;
+                document.getElementById('newCodeLabel').innerText = `Código para ${res.name} (${res.status})`;
+                document.getElementById('copyBtn').innerText = 'Copiar';
+                document.getElementById('newCodeBox').classList.remove('hidden');
+                form.reset();
+                avisoCodigos(`Código creado para ${res.name} — ${res.status}`);
+                actualizarDatos();
+            } catch (err) {
+                avisoCodigos(`No se pudo crear el código: ${err.message}`, true);
+            }
+        });
+
+        async function copiarCodigo() {
+            await navigator.clipboard.writeText(document.getElementById('newCode').innerText);
+            document.getElementById('copyBtn').innerText = '¡Copiado!';
+        }
+
+        // 'all' = compensar a todos; si no, es el hash del código a renovar.
+        let destinoDialogo = null;
+        function abrirDialogo(destino) {
+            destinoDialogo = destino;
+            const dialog = document.getElementById('daysDialog');
+            const form = document.getElementById('daysForm');
+            form.reset();
+            const todos = destino === 'all';
+            const codigo = codigosActuales.find((c) => c.hash === destino);
+            form.days.value = todos ? 1 : 30;
+            document.getElementById('daysTitle').innerText = todos ? 'Compensar días a todos' : `Renovar a ${codigo?.name ?? ''}`;
+            document.getElementById('daysNoteLabel').classList.toggle('hidden', todos);
+            document.getElementById('daysHelp').innerText = todos
+                ? 'Suma los días a cada código vigente o vencido dentro de ese periodo (p. ej. tras una caída del servicio).'
+                : 'Los días se suman a la fecha de vencimiento si aún no ha llegado; si ya venció, desde hoy.';
+            dialog.returnValue = ''; // Esc no cambia returnValue: sin esto se repetiría la última acción
+            dialog.showModal();
+        }
+
+        document.getElementById('daysDialog').addEventListener('close', async () => {
+            const dialog = document.getElementById('daysDialog');
+            if (dialog.returnValue !== 'ok') return;
+            const form = document.getElementById('daysForm');
+            const days = Number(form.days.value);
+            try {
+                if (destinoDialogo === 'all') {
+                    const res = await api('/api/admin/codes/extend-all', 'POST', { days });
+                    avisoCodigos(`${res.extended} código(s) extendidos ${days} días`);
+                } else {
+                    const res = await api(`/api/admin/codes/${destinoDialogo}/extend`, 'POST', { days, note: form.note.value.trim() });
+                    avisoCodigos(`${res.name} renovado — ${res.status}`);
+                }
+                actualizarDatos();
+            } catch (err) {
+                avisoCodigos(`No se pudo aplicar: ${err.message}`, true);
+            }
+        });
+
+        async function revocar(hash) {
+            const codigo = codigosActuales.find((c) => c.hash === hash);
+            if (!confirm(`¿Revocar el código de ${codigo?.name}? Perderá el acceso de inmediato.`)) return;
+            try {
+                const res = await api(`/api/admin/codes/${hash}`, 'DELETE');
+                avisoCodigos(`Código de ${res.name} revocado`);
+                actualizarDatos();
+            } catch (err) {
+                avisoCodigos(`No se pudo revocar: ${err.message}`, true);
+            }
+        }
+
+        // Importar = fusionar: nunca borra códigos del servidor. Si un código está en ambos, gana el que vence más tarde.
+        const venceEn = (info) => info.expires ?? '9999';  // sin caducidad = el más lejano
+
+        function validarRespaldo(datos) {
+            if (!datos || typeof datos !== 'object' || Array.isArray(datos)) throw new Error('el archivo no es un authorized_codes.json');
+            for (const [hash, info] of Object.entries(datos)) {
+                if (!/^[0-9a-f]{64}$/.test(hash) || !info || typeof info.name !== 'string' || !info.name) {
+                    throw new Error('el archivo no es un authorized_codes.json válido');
+                }
+            }
+            return datos;
+        }
+
+        document.getElementById('importFile').addEventListener('change', async (event) => {
+            const archivo = event.target.files[0];
+            event.target.value = ''; // permite volver a elegir el mismo archivo
+            if (!archivo) return;
+            try {
+                const importados = validarRespaldo(JSON.parse(await archivo.text()));
+                const actuales = await api('/api/admin/codes');
+                const fusion = { ...actuales };
+                const nuevos = [], renovados = [];
+                for (const [hash, info] of Object.entries(importados)) {
+                    if (!actuales[hash]) {
+                        fusion[hash] = info;
+                        nuevos.push(info.name);
+                    } else if (venceEn(info) > venceEn(actuales[hash])) {
+                        fusion[hash] = info;
+                        renovados.push(info.name);
+                    }
+                }
+                const soloServidor = Object.keys(actuales).filter((h) => !importados[h]).length;
+                if (!nuevos.length && !renovados.length) {
+                    avisoCodigos(`Importar ${archivo.name}: nada que cambiar, el servidor ya tiene todos esos códigos con la misma o mayor vigencia.`);
+                    return;
+                }
+                const resumen = [
+                    `Importar ${archivo.name}:`,
+                    `• ${nuevos.length} código(s) nuevo(s)${nuevos.length ? ': ' + nuevos.join(', ') : ''}`,
+                    `• ${renovados.length} con fecha de vencimiento más reciente${renovados.length ? ': ' + renovados.join(', ') : ''}`,
+                    `• ${soloServidor} que solo están en el servidor se conservan`,
+                    '',
+                    'Ojo: si el respaldo incluye códigos que revocaste después, volverán a ser válidos.',
+                ].join('\n');
+                if (!confirm(resumen)) return avisoCodigos('Importación cancelada.');
+                const res = await api('/api/admin/codes', 'PUT', fusion);
+                avisoCodigos(`Respaldo importado: ${nuevos.length} nuevo(s), ${renovados.length} actualizado(s). Total en el servidor: ${res.codes}`);
+                actualizarDatos();
+            } catch (err) {
+                avisoCodigos(`No se pudo importar: ${err.message}`, true);
+            }
+        });
+
+        async function descargarRespaldo() {
+            try {
+                const codes = await api('/api/admin/codes');
+                const blob = new Blob([JSON.stringify(codes, null, 2)], { type: 'application/json' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = 'authorized_codes.json';
+                link.click();
+                URL.revokeObjectURL(link.href);
+                avisoCodigos(`Respaldo descargado: ${Object.keys(codes).length} código(s)`);
+            } catch (err) {
+                avisoCodigos(`No se pudo descargar el respaldo: ${err.message}`, true);
+            }
+        }
+
         async function actualizarDatos() {
             const urlInput = document.getElementById('apiUrl').value.trim();
             const logContainer = document.getElementById('logContainer');
             
             try {
-                const response = await fetch(urlInput);
+                const response = await fetch(urlInput, { headers: { Authorization: `Bearer ${tokenInput.value.trim()}` } });
+                if (response.status === 401) throw new Error('Token admin inválido');
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 
                 const data = await response.json();
@@ -82,10 +891,18 @@
                 let clientesNecesarios = Math.ceil(data.projected_monthly_cost / 30);
                 document.getElementById('breakEven').innerText = `${clientesNecesarios} Cliente(s)`;
 
+                renderClientes(data.clients || []);
+                clientesConectados = new Set((data.clients || []).map((c) => c.code_hash));
+                renderCodigos(data.codes || []);
+                // El uso histórico cambia despacio: se pide como mucho una vez por minuto.
+                if (Date.now() - ultimoUso > 60000) actualizarUso();
+                if (Date.now() - ultimasMetricas > 60000) actualizarMetricas();
+                document.getElementById('codesInfo').innerText = `${data.authorized_codes} código(s) autorizado(s) · servidor activo ${duracion(data.uptime_s)}`;
+
                 document.getElementById('serverStatus').innerText = "Conectado";
                 document.getElementById('serverStatus').className = "text-sm font-semibold text-green-400";
                 
-                logContainer.innerHTML += `<div>[${new Date().toLocaleTimeString()}] Sincronizado OK — Usuarios activos: ${data.active_users}</div>`;
+                logContainer.innerHTML += `<div>[${new Date().toLocaleTimeString()}] Sincronizado OK — Usuarios activos: ${data.active_users}${data.clients?.length ? ' (' + escapeHtml(data.clients.map((c) => c.name).join(', ')) + ')' : ''}</div>`;
                 logContainer.scrollTop = logContainer.scrollHeight;
 
             } catch (err) {

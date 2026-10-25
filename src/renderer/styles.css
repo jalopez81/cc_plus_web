@@ -1251,6 +1251,10 @@ body {
   flex: 1 1 auto;
 }
 
+.engine-input-label.access-code-label {
+  flex: 0 0 112px;
+}
+
 .settings .settings-actions {
   display: flex;
   justify-content: flex-end;
@@ -1680,6 +1684,11 @@ body {
 .app-menu button:hover {
   background: #242f47;
   color: #e8ecf6;
+}
+
+.app-menu button:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 
 .overlay.collapsed .settings,

@@ -2,3 +2,9 @@ node_modules/
 out/
 .DS_Store
 .env
+
+# Transcription server secrets
+transcription-server/authorized_codes.json
+transcription-server/admin_token.txt
+transcription-server/sessions.jsonl
+transcription-server/metrics.jsonl

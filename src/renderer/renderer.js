@@ -29,6 +29,7 @@ document.body.classList.add(`platform-${window.captioner.platform}`);
 let settings = await window.captioner.getSettings();
 settings.transcriptionEngine ??= 'whisper';
 settings.deepgramKey ??= '';
+settings.accessCode ??= '';
 settings.showTranscription = settings.showTranscription ?? settings.showOriginal ?? true;
 settings.showTranslation = settings.showTranslation ?? true;
 settings.sentenceLines ??= true;
@@ -622,6 +623,14 @@ async function start() {
       renderToggle();
       return;
     }
+    if (!/^[0-9a-f]+$/i.test(settings.accessCode)) {
+      openSettings();
+      form.accessCode.focus();
+      setStatus('error', 'Add your server access code in Engines settings.');
+      captureStarting = false;
+      renderToggle();
+      return;
+    }
   }
 
   setStatus('connecting', 'Requesting computer audio capture…');
@@ -657,6 +666,7 @@ async function start() {
           })
         : new WhisperStream({
             url: settings.transcriptionUrl,
+            accessCode: settings.accessCode,
             onTranscript: handleTranscript,
             onStatus,
           });
@@ -720,6 +730,7 @@ function syncTranslatorFields() {
 function fillForm() {
   form.transcriptionEngine.value = settings.transcriptionEngine;
   form.transcriptionUrl.value = settings.transcriptionUrl || '';
+  form.accessCode.value = settings.accessCode || '';
   form.deepgramKey.value = settings.deepgramKey || '';
   form.translator.value = settings.translator;
   form.myMemoryEmail.value = settings.myMemoryEmail || '';
@@ -747,7 +758,8 @@ async function saveForm() {
   const values = readForm();
   const restartRequired =
     values.transcriptionEngine !== settings.transcriptionEngine ||
-    (values.transcriptionEngine === 'whisper' && values.transcriptionUrl !== settings.transcriptionUrl) ||
+    (values.transcriptionEngine === 'whisper' &&
+      (values.transcriptionUrl !== settings.transcriptionUrl || values.accessCode !== settings.accessCode)) ||
     (values.transcriptionEngine === 'deepgram' && values.deepgramKey !== settings.deepgramKey);
   const translatorChanged = values.translator !== settings.translator || values.deeplKey !== settings.deeplKey;
   settings = await window.captioner.setSettings(values);
@@ -760,6 +772,7 @@ function readForm() {
   return {
     transcriptionEngine: form.transcriptionEngine.value,
     transcriptionUrl: form.transcriptionUrl.value.trim(),
+    accessCode: form.accessCode.value.trim(),
     deepgramKey: form.deepgramKey.value.trim(),
     translator: form.translator.value,
     myMemoryEmail: form.myMemoryEmail.value.trim(),
@@ -879,6 +892,23 @@ async function toggleCollapse() {
 $('winClose').addEventListener('click', () => window.captioner.close());
 $('winMinimize').addEventListener('click', () => window.captioner.minimize());
 collapseBtn.addEventListener('click', toggleCollapse);
+
+const updateBtn = $('updateBtn');
+updateBtn.addEventListener('click', async () => {
+  updateBtn.disabled = true;
+  updateBtn.textContent = 'Actualizando…';
+  try {
+    const result = await window.captioner.update();
+    showToast(result.message);
+    if (result.status === 'updated') {
+      const prompt = session ? 'Restart now to finish? This stops the current capture.' : 'Restart now to finish updating?';
+      if (window.confirm(`${result.message}\n\n${prompt}`)) window.captioner.relaunch();
+    }
+  } finally {
+    updateBtn.disabled = false;
+    updateBtn.textContent = 'Actualizar';
+  }
+});
 
 for (const button of document.querySelectorAll('.app-menu [data-menu]')) {
   button.addEventListener('click', () => {

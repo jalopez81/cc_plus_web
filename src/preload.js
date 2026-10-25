@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('captioner', {
   setCaptureMode: (mode) => ipcRenderer.invoke('capture:set-mode', mode),
   requestMicAccess: () => ipcRenderer.invoke('mic:request-access'),
   close: () => ipcRenderer.send('window:close'),
+  update: () => ipcRenderer.invoke('app:update'),
+  relaunch: () => ipcRenderer.send('app:relaunch'),
   minimize: () => ipcRenderer.send('window:minimize'),
   appendLog: (text) => ipcRenderer.send('log:append', text),
   logNewCall: () => ipcRenderer.invoke('log:new-call'),
