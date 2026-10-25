@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - SaaS Captioning</title>
+    <!-- Tailwind CSS para un diseño limpio y moderno -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans p-6">
+
+    <div class="max-w-6xl mx-auto">
+        <!-- Encabezado -->
+        <header class="flex justify-between items-center mb-8 border-b border-gray-800 pb-4">
+            <div>
+                <h1 class="text-2xl font-bold text-white">Panel de Administración</h1>
+                <p class="text-sm text-gray-400">Monitoreo de infraestructura y concurrencia en tiempo real</p>
+            </div>
+            <div class="flex items-center space-x-2">
+                <span class="inline-block w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
+                <span class="text-sm font-semibold text-green-400" id="serverStatus">Conectado</span>
+            </div>
+        </header>
+
+        <!-- Configuración de Conexión -->
+        <div class="bg-gray-800 p-4 rounded-xl mb-6 flex gap-4 items-center">
+            <label class="text-sm font-medium text-gray-300 whitespace-nowrap">URL del Backend:</label>
+            <input type="text" id="apiUrl" value="https://wl4u6khi2kn8r7-8000.proxy.runpod.net/api/admin/stats" 
+                   class="bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 w-full focus:outline-none focus:border-blue-500">
+            <button onclick="actualizarDatos()" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">Actualizar</button>
+        </div>
+
+        <!-- Tarjetas de Métricas Principales -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <!-- Concurrencia -->
+            <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg">
+                <p class="text-sm font-medium text-gray-400">Usuarios Conectados Ahora</p>
+                <h3 class="text-4xl font-extrabold text-blue-400 mt-2" id="activeUsers">0</h3>
+                <p class="text-xs text-gray-500 mt-1">Sesiones de WebSocket activas</p>
+            </div>
+
+            <!-- Costo Servidor Proyectado -->
+            <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg">
+                <p class="text-sm font-medium text-gray-400">Costo Servidor Proyectado (24/7) RTX 3060 0.09/hr vast.ai</p>
+                <h3 class="text-4xl font-extrabold text-green-400 mt-2" id="projectedCost">$0.00</h3>
+                <p class="text-xs text-gray-500 mt-1">Basado en tarifa por hora actual</p>
+            </div>
+
+            <!-- Margen Estimado (Asumiendo $30/suscriptor) -->
+            <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-lg">
+                <p class="text-sm font-medium text-gray-400">Modelo de Negocio (Break-even)</p>
+                <h3 class="text-4xl font-extrabold text-purple-400 mt-2" id="breakEven">1-2 Clientes</h3>
+                <p class="text-xs text-gray-500 mt-1">Para cubrir infraestructura fija</p>
+            </div>
+        </div>
+
+        <!-- Sección de Registros / Actividad Reciente -->
+        <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">
+            <h3 class="text-lg font-semibold text-white mb-4">Registro de Estado del Servidor</h3>
+            <div id="logContainer" class="bg-gray-900 p-4 rounded-lg h-48 overflow-y-auto font-mono text-xs text-green-400 space-y-1">
+                <div>[Sistema] Esperando primera lectura de métricas...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function actualizarDatos() {
+            const urlInput = document.getElementById('apiUrl').value.trim();
+            const logContainer = document.getElementById('logContainer');
+            
+            try {
+                const response = await fetch(urlInput);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
+                const data = await response.json();
+                
+                // Actualizar valores en pantalla
+                document.getElementById('activeUsers').innerText = data.active_users;
+                document.getElementById('projectedCost').innerText = `$${data.projected_monthly_cost.toFixed(2)} / mes`;
+                
+                // Calcular cuántos clientes se necesitan a $30/mo para pagar el servidor
+                let clientesNecesarios = Math.ceil(data.projected_monthly_cost / 30);
+                document.getElementById('breakEven').innerText = `${clientesNecesarios} Cliente(s)`;
+
+                document.getElementById('serverStatus').innerText = "Conectado";
+                document.getElementById('serverStatus').className = "text-sm font-semibold text-green-400";
+                
+                logContainer.innerHTML += `<div>[${new Date().toLocaleTimeString()}] Sincronizado OK — Usuarios activos: ${data.active_users}</div>`;
+                logContainer.scrollTop = logContainer.scrollHeight;
+
+            } catch (err) {
+                document.getElementById('serverStatus').innerText = "Sin conexión";
+                document.getElementById('serverStatus').className = "text-sm font-semibold text-red-400";
+                logContainer.innerHTML += `<div style="color: #ff6b6b;">[${new Date().toLocaleTimeString()}] Error de conexión: ${err.message}</div>`;
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }
+        }
+
+        // Auto-actualizar cada 5 segundos
+        setInterval(actualizarDatos, 5000);
+        
+        // Primera carga al abrir
+        window.onload = actualizarDatos;
+    </script>
+</body>
+</html>

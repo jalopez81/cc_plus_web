@@ -440,10 +440,30 @@ function resolveLang(language, transcript) {
   return transcript.split(/\s+/).length < MIN_SWITCH_WORDS ? currentBlock.lang : detected;
 }
 
+// ---------- conversation log ----------
+
+const logTime = (date) => date.toLocaleTimeString('en-US', { hour12: true });
+
+// Each segment is logged once, when final and translated, so Clear never loses the conversation.
+function logSegment(block, seg) {
+  const label = SPEAKER_LABELS[block.lang] ?? block.lang.toUpperCase();
+  let line = `[${logTime(seg.time)}] ${label}: ${seg.src}
+`;
+  if (seg.tr) line += `    → ${seg.tr}
+`;
+  window.captioner.appendLog(line);
+}
+
+const logSession = (event) =>
+  window.captioner.appendLog(`
+=== Session ${event} · ${new Date().toLocaleString('en-US')} ===
+`);
+
 async function translateSegment(block, seg) {
   if (settings.translator === 'off') {
     seg.tr = '';
     renderBlock(block);
+    logSegment(block, seg);
     return;
   }
   try {
@@ -471,6 +491,7 @@ async function translateSegment(block, seg) {
     setStatus('live', `Translation unavailable: ${err.message || 'request failed'}`);
   }
   renderBlock(block);
+  logSegment(block, seg);
 }
 
 function handleTranscript({ text, language, translation }) {
@@ -488,10 +509,12 @@ function handleTranscript({ text, language, translation }) {
   const seg = {
     src: transcript,
     tr: translated || (settings.translator === 'off' ? '' : undefined),
+    time: new Date(),
   };
   currentBlock.segments.push(seg);
   renderBlock(currentBlock);
   if (seg.tr === undefined) void translateSegment(currentBlock, seg);
+  else logSegment(currentBlock, seg);
 }
 
 function handleDeepgramTranscript({ text, language, isFinal, speechFinal }) {
@@ -508,11 +531,12 @@ function handleDeepgramTranscript({ text, language, isFinal, speechFinal }) {
   if (!currentBlock) currentBlock = createBlock(lang);
 
   if (isFinal) {
-    const seg = { src: transcript, tr: settings.translator === 'off' ? '' : undefined };
+    const seg = { src: transcript, tr: settings.translator === 'off' ? '' : undefined, time: new Date() };
     currentBlock.segments.push(seg);
     currentBlock.interim = '';
     renderBlock(currentBlock);
     if (seg.tr === undefined) void translateSegment(currentBlock, seg);
+    else logSegment(currentBlock, seg);
     if (speechFinal) handleUtteranceEnd();
   } else {
     currentBlock.interim = transcript;
@@ -644,6 +668,7 @@ async function start() {
     await transcription.start(audioStream);
     if (session?.transcription !== transcription) return;
     resetHoldTimer();
+    logSession('started');
 
     renderToggle();
     overlay.classList.remove('idle');
@@ -669,6 +694,7 @@ function stop({ keepStatus = false } = {}) {
   systemMeter = null;
   stopHoldTimer();
   commitBlock();
+  logSession('ended');
   renderToggle();
   overlay.classList.add('idle');
   if (!keepStatus) setStatus('idle', 'Idle');
@@ -765,6 +791,21 @@ speakIndicator.addEventListener('click', () => setMuted(!muted));
 // A plugged or unplugged headset changes the default input, so follow it (this also retries a failed start).
 navigator.mediaDevices.addEventListener('devicechange', () => void startMicMonitor());
 $('clearBtn').addEventListener('click', clearCaptions);
+
+// Marks a call boundary in the log; the next speech starts a fresh bubble.
+async function newCall() {
+  commitBlock();
+  try {
+    const number = await window.captioner.logNewCall();
+    if (session) resetHoldTimer();
+    showToast(`Llamada #${number} iniciada en el registro`);
+  } catch (err) {
+    showToast('No se pudo escribir en el registro');
+    console.error('New call log failed:', err);
+  }
+}
+
+$('newCallBtn').addEventListener('click', newCall);
 
 async function changeFontSize(delta) {
   const fontSize = Math.min(FONT_MAX, Math.max(FONT_MIN, settings.fontSize + delta));
@@ -875,6 +916,7 @@ const MENU_ACTIONS = {
   'toggle-capture': () => (session ? stop() : start()),
   'toggle-mute': () => setMuted(!muted),
   'clear-captions': clearCaptions,
+  'new-call': newCall,
   'copy-transcript': copyTranscript,
   'copy-notes': () => $('copyNotes').click(),
   'clear-notes': () => $('clearNotes').click(),

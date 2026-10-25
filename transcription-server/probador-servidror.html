@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prueba WebSocket & DeepL BYOK - Faster-Whisper</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 40px; 
+            background: #f4f4f9; 
+            color: #333; 
+        }
+        .card { 
+            background: white; 
+            padding: 24px; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
+            margin-bottom: 20px; 
+        }
+        h2, h3 { margin-top: 0; }
+        label { font-weight: 600; font-size: 14px; }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            margin-top: 5px;
+            margin-bottom: 15px;
+        }
+        .row {
+            display: flex;
+            gap: 15px;
+        }
+        .col { flex: 1; }
+        button { 
+            padding: 10px 20px; 
+            font-size: 15px; 
+            font-weight: bold;
+            cursor: pointer; 
+            border: none; 
+            border-radius: 4px; 
+            color: white; 
+            margin-right: 10px;
+        }
+        #btnConnect { background: #007bff; }
+        #btnConnect:hover { background: #0069d9; }
+        #btnStart { background: #28a745; display: none; }
+        #btnStart:hover { background: #218838; }
+        #btnStop { background: #dc3545; display: none; }
+        #btnStop:hover { background: #c82333; }
+        
+        .meter-container {
+            margin-top: 15px;
+        }
+        .meter-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #555;
+        }
+        .meter-bar-bg {
+            width: 100%;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            height: 18px;
+            margin-top: 5px;
+            border: 1px solid #ced4da;
+        }
+        #micLevel {
+            width: 0%;
+            height: 100%;
+            background: #28a745;
+            transition: width 0.05s ease-out;
+        }
+
+        #log { 
+            background: #1e1e1e; 
+            color: #4af626; 
+            padding: 15px; 
+            border-radius: 6px; 
+            height: 300px; 
+            overflow-y: auto; 
+            font-family: 'Courier New', Courier, monospace; 
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .transcript-entry {
+            margin-bottom: 8px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 6px;
+        }
+        .transcript-lang {
+            color: #00bcff;
+            font-weight: bold;
+        }
+        .translation-text {
+            color: #ffb347;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Panel de Prueba - Captura & Traducción BYOK (DeepL)</h2>
+        
+        <div class="row">
+            <div class="col">
+                <label for="wsUrl">URL del Servidor RunPod (WSS):</label>
+                <input type="text" id="wsUrl" placeholder="wss://..." />
+            </div>
+            <div class="col">
+                <label for="deeplKey">Tu DeepL API Key (Free/Pro):</label>
+                <input type="password" id="deeplKey" placeholder="ej. 12345678-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx" />
+            </div>
+        </div>
+        
+        <div>
+            <button id="btnConnect" onclick="conectarWebSocket()">1. Conectar al Servidor</button>
+            <button id="btnStart" onclick="iniciarGrabacion()">2. Hablar / Iniciar Envío</button>
+            <button id="btnStop" onclick="detenerGrabacion()">Detener Grabación</button>
+        </div>
+
+        <!-- Indicador de volumen del micrófono -->
+        <div class="meter-container">
+            <span class="meter-label">Nivel de entrada del micrófono:</span>
+            <div class="meter-bar-bg">
+                <div id="micLevel"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Transcripción y Traducción en tiempo real:</h3>
+        <div id="log">Esperando conexión...</div>
+    </div>
+
+    <script>
+        let ws = null;
+        let audioStream = null;
+        let audioContext = null;
+        let analyser = null;
+        let microphone = null;
+        let workletNode = null;
+
+        // --- Cargar datos guardados en localStorage al iniciar ---
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedUrl = localStorage.getItem('wsUrl');
+            const savedKey = localStorage.getItem('deeplKey');
+
+            if (savedUrl) {
+                document.getElementById('wsUrl').value = savedUrl;
+            } else {
+                document.getElementById('wsUrl').value = 'wss://wl4u6khi2kn8r7-8000.proxy.runpod.net/ws/transcribe';
+            }
+
+            if (savedKey) {
+                document.getElementById('deeplKey').value = savedKey;
+            }
+
+            // Escuchar cambios para guardar automáticamente
+            document.getElementById('wsUrl').addEventListener('input', (e) => {
+                localStorage.setItem('wsUrl', e.target.value.trim());
+            });
+            document.getElementById('deeplKey').addEventListener('input', (e) => {
+                localStorage.setItem('deeplKey', e.target.value.trim());
+            });
+        });
+
+        function log(mensaje) {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML += `<div>> ${mensaje}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        async function traducirTexto(textoOriginal, langOrigen) {
+            const apiKey = document.getElementById('deeplKey').value.trim();
+            if (!apiKey) {
+                return "<span style='color:#888;'>(Añade tu DeepL API Key arriba para ver la traducción)</span>";
+            }
+
+            const endpoint = apiKey.endsWith(':fx') 
+                ? 'https://api-free.deepl.com/v2/translate' 
+                : 'https://api.deepl.com/v2/translate';
+
+            const targetLang = (langOrigen.toLowerCase() === 'es') ? 'EN' : 'ES';
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `DeepL-Auth-Key ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        text: [textoOriginal],
+                        target_lang: targetLang
+                    })
+                });
+
+                if (response.status === 456) {
+                    return "<span style='color:#ff4d4d;'>[Error DeepL: Límite de 500k caracteres alcanzado]</span>";
+                } else if (response.status === 403) {
+                    return "<span style='color:#ff4d4d;'>[Error DeepL: API Key inválida]</span>";
+                } else if (!response.ok) {
+                    return `<span style='color:#ff4d4d;'>[Error DeepL HTTP ${response.status}]</span>`;
+                }
+
+                const data = await response.json();
+                if (data.translations && data.translations.length > 0) {
+                    return `${data.translations[0].text} <small>(${targetLang})</small>`;
+                }
+            } catch (err) {
+                return `<span style='color:#ff4d4d;'>[Error de red al conectar con DeepL: ${err.message}]</span>`;
+            }
+            return "";
+        }
+
+        function conectarWebSocket() {
+            const urlInput = document.getElementById('wsUrl');
+            const url = urlInput.value.trim();
+            
+            // Guardar explícitamente al conectar
+            localStorage.setItem('wsUrl', url);
+            localStorage.setItem('deeplKey', document.getElementById('deeplKey').value.trim());
+
+            log(`Conectando a ${url}...`);
+            
+            try {
+                ws = new WebSocket(url);
+
+                ws.onopen = function() {
+                    log("¡Conexión WebSocket establecida con éxito!");
+                    document.getElementById('btnConnect').style.display = 'none';
+                    document.getElementById('btnStart').style.display = 'inline-block';
+                };
+
+                ws.onmessage = async function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.transcript) {
+                            const logDiv = document.getElementById('log');
+                            const lang = (data.language || 'ES').toUpperCase();
+                            
+                            const traduccion = await traducirTexto(data.transcript, lang);
+
+                            let html = `<div class="transcript-entry">`;
+                            html += `<span class="transcript-lang">[${lang}]:</span> ${data.transcript}`;
+                            if (traduccion) {
+                                html += `<br>🌐 <span class="translation-text">${traduccion}</span>`;
+                            }
+                            html += `</div>`;
+
+                            logDiv.innerHTML += html;
+                            logDiv.scrollTop = logDiv.scrollHeight;
+                        } else if (data.error) {
+                            log(`Error devuelto por el servidor: ${data.error}`);
+                        }
+                    } catch (e) {
+                        log(`Respuesta no procesable: ${event.data}`);
+                    }
+                };
+                
+                ws.onerror = function(error) {
+                    log("Error en el canal WebSocket. Revisa la URL o el estado del Pod.");
+                };
+
+                ws.onclose = function() {
+                    log("Conexión WebSocket cerrada.");
+                    detenerGrabacion();
+                    document.getElementById('btnConnect').style.display = 'inline-block';
+                    document.getElementById('btnStart').style.display = 'none';
+                    document.getElementById('btnStop').style.display = 'none';
+                };
+            } catch (err) {
+                log(`Error al intentar abrir el WebSocket: ${err.message}`);
+            }
+        }
+
+        async function iniciarGrabacion() {
+            try {
+                audioStream = await navigator.mediaDevices.getUserMedia({
+                    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+                });
+
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                microphone = audioContext.createMediaStreamSource(audioStream);
+
+                analyser = audioContext.createAnalyser();
+                analyser.smoothingTimeConstant = 0.8;
+                analyser.fftSize = 512;
+                microphone.connect(analyser);
+
+                const micLevelBar = document.getElementById('micLevel');
+                function actualizarMedidor() {
+                    if (!audioStream || !audioStream.active) return;
+                    const arr = new Uint8Array(analyser.frequencyBinCount);
+                    analyser.getByteFrequencyData(arr);
+                    const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
+                    micLevelBar.style.width = Math.min(100, Math.round(avg * 2.5)) + '%';
+                    requestAnimationFrame(actualizarMedidor);
+                }
+                actualizarMedidor();
+
+                const mute = audioContext.createGain();
+                mute.gain.value = 0;
+
+                function enviarPCM(buffer) {
+                    if (ws && ws.readyState === WebSocket.OPEN) ws.send(buffer);
+                }
+
+                try {
+                    const workletCode = `
+                        class PCMProcessor extends AudioWorkletProcessor {
+                            constructor() { super(); this.buf = new Int16Array(4096); this.n = 0; }
+                            process(inputs) {
+                                const ch = inputs[0][0];
+                                if (!ch) return true;
+                                for (let i = 0; i < ch.length; i++) {
+                                    const s = Math.max(-1, Math.min(1, ch[i]));
+                                    this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                                    if (this.n === this.buf.length) {
+                                        this.port.postMessage(this.buf.buffer.slice(0));
+                                        this.n = 0;
+                                    }
+                                }
+                                return true;
+                            }
+                        }
+                        registerProcessor('pcm-processor', PCMProcessor);
+                    `;
+                    await audioContext.audioWorklet.addModule(
+                        'data:application/javascript;charset=utf-8,' + encodeURIComponent(workletCode)
+                    );
+                    workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
+                    workletNode.port.onmessage = (e) => enviarPCM(e.data);
+                    microphone.connect(workletNode);
+                    workletNode.connect(mute).connect(audioContext.destination);
+                    log("Capturando audio a 16kHz (AudioWorklet).");
+                } catch (workletErr) {
+                    log("Usando ScriptProcessor para captura de audio.");
+                    workletNode = audioContext.createScriptProcessor(4096, 1, 1);
+                    workletNode.onaudioprocess = (e) => {
+                        const input = e.inputBuffer.getChannelData(0);
+                        const pcm = new Int16Array(input.length);
+                        for (let i = 0; i < input.length; i++) {
+                            const s = Math.max(-1, Math.min(1, input[i]));
+                            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                        }
+                        enviarPCM(pcm.buffer);
+                    };
+                    microphone.connect(workletNode);
+                    workletNode.connect(mute).connect(audioContext.destination);
+                }
+
+                log("Grabación iniciada. Habla por el micrófono...");
+                document.getElementById('btnStart').style.display = 'none';
+                document.getElementById('btnStop').style.display = 'inline-block';
+
+            } catch (err) {
+                log(`Error de acceso al micrófono: ${err.message}`);
+            }
+        }
+
+        function detenerGrabacion() {
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext && audioContext.state !== "closed") {
+                audioContext.close();
+            }
+
+            const micLevelBar = document.getElementById('micLevel');
+            if (micLevelBar) micLevelBar.style.width = '0%';
+
+            log("Grabación detenida.");
+            document.getElementById('btnStop').style.display = 'none';
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                document.getElementById('btnStart').style.display = 'inline-block';
+            }
+        }
+
+        window.conectarWebSocket = conectarWebSocket;
+        window.iniciarGrabacion = iniciarGrabacion;
+        window.detenerGrabacion = detenerGrabacion;
+    </script>
+</body>
+</html>

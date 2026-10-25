@@ -8,6 +8,7 @@ const {
   safeStorage,
   screen,
   session,
+  shell,
   systemPreferences,
 } = require('electron');
 const fs = require('node:fs');
@@ -167,6 +168,48 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
+// ---------- conversation log ----------
+
+const logsDir = () => path.join(app.getPath('userData'), 'logs');
+// sv-SE formats the local date as YYYY-MM-DD, giving one sortable file per day.
+const logFile = () => path.join(logsDir(), `${new Date().toLocaleDateString('sv-SE')}.log`);
+let logQueue = Promise.resolve();
+
+// Appends are chained so lines never interleave, and async so captions never wait on the disk.
+function appendLog(text) {
+  logQueue = logQueue
+    .then(() => fs.promises.mkdir(logsDir(), { recursive: true }))
+    .then(() => fs.promises.appendFile(logFile(), text, 'utf8'))
+    .catch((err) => console.error('Could not write conversation log:', err));
+}
+
+const CALL_HEADER = /^#+ Call #d+/gm;
+
+// Numbers calls per day by counting headers already in today's file, so it survives restarts.
+function logNewCall() {
+  const done = logQueue.then(async () => {
+    let existing = '';
+    try {
+      existing = await fs.promises.readFile(logFile(), 'utf8');
+    } catch {}
+    const number = (existing.match(CALL_HEADER)?.length ?? 0) + 1;
+    const stamp = new Date().toLocaleString('en-US');
+    await fs.promises.mkdir(logsDir(), { recursive: true });
+    await fs.promises.appendFile(logFile(), `
+
+########## Call #${number} · ${stamp} ##########
+`, 'utf8');
+    return number;
+  });
+  logQueue = done.catch((err) => console.error('Could not write conversation log:', err));
+  return done;
+}
+
+async function openLogsFolder() {
+  await fs.promises.mkdir(logsDir(), { recursive: true });
+  await shell.openPath(logsDir());
+}
+
 // ---------- collapse ----------
 
 let expandedHeight = null;
@@ -203,8 +246,10 @@ function buildMenu(name) {
     file: [
       { label: 'Start / Stop capture', click: () => sendMenuAction('toggle-capture') },
       { label: 'Mute / Unmute transcription', click: () => sendMenuAction('toggle-mute') },
+      { label: 'New call', click: () => sendMenuAction('new-call') },
       { label: 'Clear captions', click: () => sendMenuAction('clear-captions') },
       { label: 'Copy transcript', click: () => sendMenuAction('copy-transcript') },
+      { label: 'Open conversation logs', click: () => void openLogsFolder() },
       { type: 'separator' },
       { label: 'Minimize', click: () => win.minimize() },
       { label: 'Quit', click: () => app.quit() },
@@ -296,6 +341,10 @@ function registerIpc() {
   );
   ipcMain.on('window:close', () => app.quit());
   ipcMain.on('window:minimize', () => win?.minimize());
+  ipcMain.handle('log:new-call', () => logNewCall());
+  ipcMain.on('log:append', (_e, text) => {
+    if (typeof text === 'string' && text) appendLog(text);
+  });
   ipcMain.handle('window:set-collapsed', (_e, collapsed, contentHeight) =>
     setCollapsed(Boolean(collapsed), Number(contentHeight) || 0)
   );

@@ -1951,3 +1951,36 @@ body:not(.translator-off):not(.hide-translation) .cap.active .tr:empty {
     animation: none;
   }
 }
+
+.bottom-toolbar .new-call-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: rgba(18, 160, 160, 0.5);
+  background: rgba(18, 160, 160, 0.14);
+  color: #2ec4b6;
+  font-weight: 600;
+}
+
+.bottom-toolbar .new-call-btn:hover {
+  border-color: #12a0a0;
+  background: #12a0a0;
+  color: #fff;
+}
+
+.new-call-btn svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Fixed bubble width so growing text never resizes it sideways; only the height grows.
+   90% keeps the left (EN) / right (ES) offset visible. */
+.cap {
+  width: 90%;
+  max-width: none;
+}

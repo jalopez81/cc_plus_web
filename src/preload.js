@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('captioner', {
   requestMicAccess: () => ipcRenderer.invoke('mic:request-access'),
   close: () => ipcRenderer.send('window:close'),
   minimize: () => ipcRenderer.send('window:minimize'),
+  appendLog: (text) => ipcRenderer.send('log:append', text),
+  logNewCall: () => ipcRenderer.invoke('log:new-call'),
   setCollapsed: (collapsed, contentHeight) => ipcRenderer.invoke('window:set-collapsed', collapsed, contentHeight),
   popupMenu: (name, x, y) => ipcRenderer.send('menu:popup', name, x, y),
   onMenuAction: (callback) => ipcRenderer.on('menu:action', (_e, action) => callback(action)),
