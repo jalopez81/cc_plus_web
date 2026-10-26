@@ -11,11 +11,15 @@ const {
   shell,
   systemPreferences,
 } = require('electron');
+// Windows installer: Setup.exe runs the app with --squirrel-* flags to create/remove shortcuts; quit right after.
+if (require('electron-squirrel-startup')) app.quit();
+
 const fs = require('node:fs');
 const path = require('node:path');
 const { translate } = require('./translate');
+const { paraphrase } = require('./paraphrase');
 
-const SECRET_KEYS = ['deeplKey', 'deepgramKey', 'accessCode'];
+const SECRET_KEYS = ['deeplKey', 'deepgramKey', 'accessCode', 'geminiKey', 'groqKey'];
 const DEFAULT_SETTINGS = {
   transcriptionEngine: 'whisper',
   transcriptionUrl: process.env.CC_PLUS_TRANSCRIPTION_URL || '',
@@ -24,6 +28,8 @@ const DEFAULT_SETTINGS = {
   translator: 'off',
   deeplKey: '',
   myMemoryEmail: '',
+  geminiKey: '',
+  groqKey: '',
   fontSize: 26,
   bgColor: '#1c2740',
   showTranscription: true,
@@ -168,6 +174,15 @@ function createWindow() {
   });
 
   win.removeMenu();
+  // Right-click Copy for selected caption text; editable fields also get the usual edit actions.
+  win.webContents.on('context-menu', (_e, params) => {
+    const template = params.isEditable
+      ? [{ role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { type: 'separator' }, { role: 'selectAll' }]
+      : params.selectionText.trim()
+        ? [{ role: 'copy' }]
+        : null;
+    if (template) Menu.buildFromTemplate(template).popup({ window: win });
+  });
   // A reload resets the zoom, so reapply the saved one; the hidden menu also means zoom keys need wiring.
   win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(loadSettings().uiZoom));
   win.webContents.on('before-input-event', (event, input) => {
@@ -378,6 +393,7 @@ function registerIpc() {
     return next;
   });
   ipcMain.handle('translate', (_e, { text, from, to }) => translate(text, from, to, loadSettings()));
+  ipcMain.handle('paraphrase', (_e, { text, lang }) => paraphrase(text, lang, loadSettings()));
   ipcMain.handle('capture:set-mode', (_e, mode) => {
     captureMode = mode === 'screen' ? 'screen' : 'window';
   });

@@ -107,6 +107,26 @@ const CATEGORY_LABELS = {
   'Intervenciones y espera': 'Intervenciones',
   'Solicitudes y cierres': 'Solicitudes',
 };
+// Everyday words instead of NATO, since callers recognize them faster.
+const SPELLING_WORDS = {
+  EN: {
+    A: 'Apple', B: 'Boy', C: 'Cat', D: 'Dog', E: 'Egg', F: 'Frank', G: 'Girl', H: 'House', I: 'Ice',
+    J: 'John', K: 'King', L: 'Lemon', M: 'Mary', N: 'Nancy', O: 'Orange', P: 'Peter', Q: 'Queen',
+    R: 'Robert', S: 'Sam', T: 'Tom', U: 'Umbrella', V: 'Victor', W: 'William', X: 'X-ray', Y: 'Yellow',
+    Z: 'Zebra', Ñ: 'N with tilde',
+    0: 'zero', 1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five', 6: 'six', 7: 'seven', 8: 'eight', 9: 'nine',
+    '-': 'dash', '.': 'dot', '@': 'at', '_': 'underscore', '/': 'slash', '#': 'number', '&': 'and',
+  },
+  ES: {
+    A: 'Agua', B: 'Burro', C: 'Casa', D: 'Dedo', E: 'Escuela', F: 'Fuego', G: 'Gato', H: 'Hotel',
+    I: 'Iglesia', J: 'Jamón', K: 'Kilo', L: 'Luna', M: 'Mamá', N: 'Nariz', Ñ: 'Ñandú', O: 'Oso',
+    P: 'Papá', Q: 'Queso', R: 'Ratón', S: 'Sol', T: 'Taza', U: 'Uva', V: 'Vaca', W: 'Wáshington',
+    X: 'Xilófono', Y: 'Yoyo', Z: 'Zapato',
+    0: 'cero', 1: 'uno', 2: 'dos', 3: 'tres', 4: 'cuatro', 5: 'cinco', 6: 'seis', 7: 'siete', 8: 'ocho', 9: 'nueve',
+    '-': 'guion', '.': 'punto', '@': 'arroba', '_': 'guion bajo', '/': 'barra', '#': 'número', '&': 'y',
+  },
+};
+const SPELLING_CONNECTOR = { EN: 'as in', ES: 'de' };
 const LEGACY_REMOVED_IDS = new Set(['dialout-transfer', 'another-dialout']);
 const LEGACY_DEFAULT_TEXTS = new Map([
   [
@@ -137,6 +157,12 @@ const elements = {
   language: $('soundbyteLanguage'),
   text: $('soundbyteText'),
   backgroundColor: $('soundbyteBackgroundColor'),
+  spellingButton: $('spellingButton'),
+  spellingPopup: $('spellingPopup'),
+  spellingInput: $('spellingInput'),
+  spellingTiles: $('spellingTiles'),
+  spellingEmpty: $('spellingEmpty'),
+  spellingLanguageButtons: [...document.querySelectorAll('[data-spelling-language]')],
 };
 
 let state = loadState();
@@ -150,6 +176,7 @@ function loadState() {
     name: '',
     interpreterId: '',
     notes: '',
+    spellingLanguage: 'EN',
     soundbytes: withRandomColors(structuredClone(DEFAULT_SOUNDBYTES)),
   };
 
@@ -192,6 +219,9 @@ function loadState() {
       name: typeof parsed.name === 'string' ? parsed.name : fallback.name,
       interpreterId: typeof parsed.interpreterId === 'string' ? parsed.interpreterId : fallback.interpreterId,
       notes: typeof parsed.notes === 'string' ? parsed.notes : fallback.notes,
+      spellingLanguage: Object.hasOwn(SPELLING_WORDS, parsed.spellingLanguage)
+        ? parsed.spellingLanguage
+        : fallback.spellingLanguage,
       soundbytes: savedSoundbytes,
     };
   } catch (error) {
@@ -327,6 +357,57 @@ function languageLabel(language) {
 
 function showPopover(popover) {
   elements.soundbytePopup.hidden = popover !== elements.soundbytePopup;
+  elements.spellingPopup.hidden = popover !== elements.spellingPopup;
+}
+
+// Accented vowels (Á, É…) use the word of their base letter; Ñ keeps its own.
+function spellingKey(char) {
+  const upper = char.toUpperCase();
+  return upper === 'Ñ' ? upper : upper.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function spelledCharacters() {
+  const words = SPELLING_WORDS[state.spellingLanguage];
+  return [...elements.spellingInput.value].map((char) => ({
+    char: char.toUpperCase(),
+    word: char.trim() ? (words[spellingKey(char)] ?? '') : null,
+  }));
+}
+
+function renderSpelling() {
+  for (const button of elements.spellingLanguageButtons) {
+    button.setAttribute('aria-pressed', String(button.dataset.spellingLanguage === state.spellingLanguage));
+  }
+  const characters = spelledCharacters();
+  elements.spellingEmpty.hidden = characters.length > 0;
+  elements.spellingTiles.replaceChildren(
+    ...characters.map(({ char, word }) => {
+      const tile = document.createElement('div');
+      if (word === null) {
+        tile.className = 'spelling-gap';
+        return tile;
+      }
+      tile.className = 'spelling-tile';
+      const letter = document.createElement('strong');
+      letter.textContent = char;
+      const label = document.createElement('span');
+      label.textContent = word;
+      tile.append(letter, label);
+      return tile;
+    }),
+  );
+}
+
+function spellingText() {
+  const connector = SPELLING_CONNECTOR[state.spellingLanguage];
+  return spelledCharacters()
+    .map(({ char, word }) => {
+      if (word === null) return '/';
+      if (!word) return char;
+      return /\p{L}/u.test(char) ? `${char} ${connector} ${word}` : word;
+    })
+    .join(', ')
+    .replaceAll(', /, ', ' / ');
 }
 
 function openEditor(item = null) {
@@ -423,6 +504,25 @@ for (const button of elements.categoryButtons) {
   });
 }
 
+elements.spellingButton.addEventListener('click', () => {
+  const opening = elements.spellingPopup.hidden;
+  showPopover(opening ? elements.spellingPopup : null);
+  if (opening) elements.spellingInput.focus();
+});
+
+for (const button of elements.spellingLanguageButtons) {
+  button.addEventListener('click', () => {
+    state.spellingLanguage = button.dataset.spellingLanguage;
+    persistState();
+    renderSpelling();
+  });
+}
+
+elements.spellingInput.addEventListener('input', renderSpelling);
+$('copySpelling').addEventListener('click', () => {
+  if (elements.spellingInput.value.trim()) copyText(spellingText(), 'Deletreo copiado');
+});
+
 for (const button of document.querySelectorAll('[data-close-popover]')) {
   button.addEventListener('click', () => showPopover(null));
 }
@@ -482,3 +582,4 @@ elements.name.value = state.name;
 elements.interpreterId.value = state.interpreterId;
 elements.notes.value = state.notes;
 renderSoundbytes();
+renderSpelling();

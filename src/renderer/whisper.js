@@ -58,6 +58,7 @@ export class WhisperStream {
           this.onTranscript({
             text: data.transcript,
             language: data.language || 'en',
+            confident: data.confident === true,
             translation: typeof data.translation === 'string' ? data.translation : '',
             translation_language: data.translation_language ?? null,
           });

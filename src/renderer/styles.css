@@ -383,6 +383,12 @@ body.paragraphs .cap .tr {
   display: none;
 }
 
+/* Only the spoken text and its translation are selectable, so a copy skips the time, label and buttons. */
+.cap .src .text,
+.cap .tr {
+  user-select: text;
+}
+
 .cap .sentence {
   outline: 2px solid transparent;
   outline-offset: 1px;
@@ -2088,4 +2094,154 @@ body:not(.translator-off):not(.hide-translation) .cap.active .tr:empty {
   gap: 6px;
   color: #c3ccdd;
   cursor: pointer;
+}
+
+/* Spelling helper: one tile per character, letter on top and its everyday word underneath. */
+.spelling-controls {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.spelling-controls .soundbyte-search {
+  flex: 1;
+}
+
+.spelling-language {
+  display: flex;
+  flex: none;
+  align-self: flex-start;
+  min-height: 34px;
+}
+
+.spelling-language button {
+  padding: 4px 9px;
+  font-size: 11px;
+  border-color: #4c3a6e;
+  background: #2e2444;
+  color: #a8b5cd;
+}
+
+.spelling-language button:first-child {
+  border-radius: 7px 0 0 7px;
+}
+
+.spelling-language button:last-child {
+  border-left: none;
+  border-radius: 0 7px 7px 0;
+}
+
+.spelling-language button[aria-pressed='true'] {
+  background: rgba(18, 160, 160, 0.25);
+  color: #e8ecf6;
+}
+
+.spelling-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.spelling-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 58px;
+  padding: 6px 7px;
+  border: 1px solid #4c3a6e;
+  border-radius: 8px;
+  background: #2e2444;
+}
+
+.spelling-tile strong {
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.spelling-tile span {
+  color: #a8b5cd;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.spelling-gap {
+  width: 14px;
+}
+
+.spelling-popover .popover-footer {
+  margin-top: auto;
+  padding-top: 9px;
+}
+
+/* ABC (spelling) stands apart from the phrase categories: heavier type and its own amber tint. */
+.interpreter-tools > #spellingButton {
+  border-color: rgba(255, 209, 102, 0.5);
+  background: rgba(255, 209, 102, 0.14);
+  color: #ffd166;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.interpreter-tools > #spellingButton:hover {
+  border-color: #ffd166;
+  background: rgba(255, 209, 102, 0.24);
+  color: #ffe2a0;
+}
+
+.engine-row-label {
+  color: #8b98b3;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* Paraphrase: an on-demand Gemini summary under the translation. */
+.cap .paraphrase:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.paraphrase-btn {
+  padding: 1px 7px;
+  border: 1px solid rgba(199, 146, 234, 0.5);
+  border-radius: 4px;
+  background: rgba(199, 146, 234, 0.12);
+  color: #c792ea;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-shadow: none;
+}
+
+.paraphrase-btn:hover:not(:disabled) {
+  border-color: #c792ea;
+  background: rgba(199, 146, 234, 0.25);
+  color: #fff;
+}
+
+.paraphrase-btn:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.cap .summary {
+  padding: 6px 9px;
+  border-left: 3px solid #c792ea;
+  border-radius: 4px;
+  background: rgba(199, 146, 234, 0.1);
+  font-size: calc(var(--font-size) * 0.62);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.cap .summary.error {
+  border-left-color: #ff9f0a;
+  color: #ff9f0a;
 }

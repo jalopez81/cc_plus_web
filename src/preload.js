@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('captioner', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
   translate: (text, from, to) => ipcRenderer.invoke('translate', { text, from, to }),
+  paraphrase: (text, lang) => ipcRenderer.invoke('paraphrase', { text, lang }),
   setCaptureMode: (mode) => ipcRenderer.invoke('capture:set-mode', mode),
   requestMicAccess: () => ipcRenderer.invoke('mic:request-access'),
   close: () => ipcRenderer.send('window:close'),

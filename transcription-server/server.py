@@ -1,10 +1,11 @@
 # cd /workspace && bash starth.bh
 # server.py — Servidor optimizado puramente para transcripción en tiempo real (Faster-Whisper)
-import os, sys, asyncio, inspect, json, hashlib, secrets, time, itertools, argparse, bisect, collections
+import os, re, sys, asyncio, inspect, json, hashlib, secrets, time, itertools, argparse, bisect, collections, unicodedata
 from datetime import datetime, timezone, timedelta
 
 # ---- Códigos de acceso autorizados ----
-# Solo se guarda el SHA-256 de cada código; el código en claro se muestra una única vez al crearlo.
+# Los clientes se validan por el SHA-256 del código. Desde que el admin puede volver a copiarlos, los códigos nuevos
+# también guardan el texto en claro ("code"); los creados antes solo tienen el hash y no se pueden recuperar.
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
 CODES_FILE = os.path.join(BASE_DIR, "authorized_codes.json")
 ADMIN_TOKEN_FILE = os.path.join(BASE_DIR, "admin_token.txt")
@@ -80,7 +81,8 @@ def find_codes(codes: dict, target: str) -> list[str]:
 def create_code(codes: dict, name: str, days: int, email: str = "", note: str = "") -> str:
     now = datetime.now(timezone.utc)
     code = secrets.token_hex(16)
-    info = {"name": name, "email": email, "note": note, "created": now.isoformat(timespec="seconds")}
+    # El código en claro se guarda junto al hash para que el admin pueda volver a copiarlo; la validación sigue usando el hash.
+    info = {"name": name, "email": email, "note": note, "created": now.isoformat(timespec="seconds"), "code": code}
     if days > 0:
         info["expires"] = (now + timedelta(days=days)).isoformat(timespec="seconds")
     codes[hash_code(code)] = info
@@ -150,7 +152,7 @@ def cli():
     if args.cmd == "add-code":
         code = create_code(codes, args.name, args.days, args.email, args.note)
         save_codes(codes)
-        print(f"Código para '{args.name}' — {code_status(codes[hash_code(code)])[1]}\n(guárdalo, no se vuelve a mostrar):\n\n{code}\n\nRecuerda: push-codes")
+        print(f"Código para '{args.name}' — {code_status(codes[hash_code(code)])[1]}\n(list-codes lo vuelve a mostrar):\n\n{code}\n\nRecuerda: push-codes")
     elif args.cmd == "extend-code":
         matches = find_codes(codes, args.target)
         if len(matches) != 1:
@@ -164,7 +166,7 @@ def cli():
         for h, info in sorted(codes.items(), key=lambda kv: kv[1].get("expires", "9999")):
             extra = "  ".join(x for x in (info.get("email"), info.get("note")) if x)
             print(f"{info['name']}  ·  {code_status(info)[1]}" + (f"  ·  {extra}" if extra else ""))
-            print(f"{h[:12]}\n")
+            print(f"{info.get('code') or h[:12] + '… (creado antes de guardar códigos; no recuperable)'}\n")
         if not codes:
             print("No hay códigos autorizados.")
     elif args.cmd == "extend-all":
@@ -193,7 +195,7 @@ def cli():
         for h in matches:
             del codes[h]
         save_codes(codes)
-        print(f"Revocados: {len(matches)}. Recuerda: push-codes")
+        print(f"Eliminados: {len(matches)}. Recuerda: push-codes")
 
 if __name__ == "__main__" and len(sys.argv) > 1:
     cli()
@@ -442,7 +444,7 @@ def admin_revoke_code(code_hash: str, request: Request):
     info = find_code_or_404(codes, code_hash)
     codes = {h: i for h, i in codes.items() if i is not info}
     save_codes(codes)
-    print(f"[ADMIN] Código de {info['name']} revocado")
+    print(f"[ADMIN] Código de {info['name']} eliminado")
     return {"name": info["name"]}
 
 @app.put("/api/admin/codes")
@@ -506,7 +508,7 @@ def admin_stats(request: Request):
         "uptime_s": int(now - STARTED_AT),
         "authorized_codes": len(cached_codes()),
         "codes": [
-            {"code_hash": h[:12], "hash": h, "name": i["name"], "email": i.get("email", ""), "note": i.get("note", ""),
+            {"code_hash": h[:12], "hash": h, "code": i.get("code", ""), "name": i["name"], "email": i.get("email", ""), "note": i.get("note", ""),
              "expires": i.get("expires"), "valid": code_status(i)[0], "status": code_status(i)[1]}
             for h, i in cached_codes().items()
         ],
@@ -517,8 +519,10 @@ def admin_stats(request: Request):
         ],
     }
 
-print("Cargando modelo Whisper en la GPU...")
-model = WhisperModel("small", device="cuda", compute_type="float16")
+# WHISPER_MODEL permite probar otro tamaño sin tocar el código (p. ej. "medium" o "large-v3-turbo").
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")
+print(f"Cargando modelo Whisper '{WHISPER_MODEL}' en la GPU...")
+model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
 print("¡Whisper cargado correctamente!")
 
 # ---- Parámetros de segmentación y estilos ----
@@ -543,20 +547,71 @@ def rms_int16(data: bytes) -> float:
     a = np.frombuffer(data[:n], dtype=np.int16).astype(np.float32) / 32768.0
     return float(np.sqrt(np.mean(a * a)))
 
-def transcribe_sync(audio, prev_text="", prev_lang=None):
-    t_start = time.perf_counter()
-    # 1. Detectar el idioma del audio original. Sin VAD aquí: transcribe() ya lo aplica abajo,
-    #    y el segmento ya llega recortado por silencios (RMS), así que pasarlo dos veces no aporta.
-    _, _, all_probs = model.detect_language(audio, vad_filter=False)
-    t_detected = time.perf_counter()
-    probs = {code: p for code, p in all_probs if code in ALLOWED_LANGS}
-    lang = max(probs, key=probs.get) if probs else "es"
+# La detección de idioma de Whisper falla a menudo en fragmentos cortos o con acento. Si su reparto entre
+# es/en no supera LANG_CONFIDENT, se transcribe en ambos idiomas y se queda el que Whisper decodifica con más
+# seguridad. No se favorece el idioma anterior: en una llamada interpretada cada turno cambia de idioma.
+LANG_CONFIDENT = 0.80
 
+# Whisper "oye" estas frases en ruido, música o voces lejanas. Solo se descartan si además el audio es flojo
+# o Whisper duda; un "thank you" claro y en primer plano se mantiene.
+HALLUCINATIONS = {
+    "thank you", "thank you very much", "thanks", "thank you so much", "thanks for watching",
+    "thank you for watching", "please subscribe", "you", "bye", "bye bye",
+    "gracias", "muchas gracias", "gracias por ver", "gracias por ver el video", "suscribete",
+    "subtitulos realizados por la comunidad de amaraorg", "chao",
+}
+HALLU_QUIET_RMS   = RMS_THRESHOLD * 2.5  # por debajo de esto suena a voz lejana o ruido de fondo
+HALLU_NO_SPEECH   = 0.2
+HALLU_MIN_LOGPROB = -0.6
+MAX_REPEATS       = 2  # una frase se muestra como mucho dos veces seguidas
+
+def normalize_text(text: str) -> str:
+    text = unicodedata.normalize("NFD", text.lower())
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return " ".join(re.sub(r"[^\w\s]", "", text).split())
+
+def collapse_repeats(text: str, max_repeats: int = MAX_REPEATS) -> str:
+    """'thank you, thank you, thank you, thank you' -> 'thank you, thank you'. Compara frases de 1 a 8 palabras."""
+    words = text.split()
+    keys = [normalize_text(w) for w in words]
+    for n in range(1, 9):
+        i = 0
+        while i + n * (max_repeats + 1) <= len(words):
+            run = 1
+            while keys[i + run * n:i + (run + 1) * n] == keys[i:i + n]:
+                run += 1
+            if run > max_repeats and any(keys[i:i + n]):
+                last = i + max_repeats * n - 1  # la última copia que queda hereda el cierre (". ?") de la eliminada
+                words[last] = re.sub(r"\W*$", "", words[last]) + re.search(r"\W*$", words[i + run * n - 1]).group()
+                del words[i + max_repeats * n:i + run * n]
+                del keys[i + max_repeats * n:i + run * n]
+            i += 1
+    return " ".join(words)
+
+def is_hallucination(text: str) -> bool:
+    chunks = [normalize_text(c) for c in re.split(r"[.,!?¿¡;]+", text)]
+    chunks = [c for c in chunks if c]
+    return bool(chunks) and (
+        all(c in HALLUCINATIONS for c in chunks)
+        or normalize_text(collapse_repeats(text, 1)) in HALLUCINATIONS
+    )
+
+def keep_segment(audio, seg) -> bool:
+    if not is_hallucination(seg.text):
+        return True
+    piece = audio[int(seg.start * SAMPLE_RATE):int(seg.end * SAMPLE_RATE)]
+    rms = float(np.sqrt(np.mean(piece * piece))) if len(piece) else 0.0
+    keep = rms >= HALLU_QUIET_RMS and seg.no_speech_prob < HALLU_NO_SPEECH and seg.avg_logprob > HALLU_MIN_LOGPROB
+    if not keep:
+        print(f"[FILTRO] descartado '{seg.text.strip()}' (rms={rms:.3f} no_speech={seg.no_speech_prob:.2f} "
+              f"logprob={seg.avg_logprob:.2f})")
+    return keep
+
+def run_transcribe(audio, lang, prev_text, prev_lang):
+    """Transcribe forzando `lang`. Devuelve (texto, avg_logprob ponderado por duración)."""
     context = prev_text[-150:] if (prev_text and lang == prev_lang and any(c in prev_text for c in ",.?!¿")) else ""
     prompt = (STYLE_PROMPTS.get(lang, "") + " " + context).strip()
-
-    # 2. Transcripción pura en el idioma original
-    segments_orig, _ = model.transcribe(
+    segments, _ = model.transcribe(
         audio,
         language=lang,
         beam_size=3,
@@ -565,11 +620,38 @@ def transcribe_sync(audio, prev_text="", prev_lang=None):
         condition_on_previous_text=False,
         initial_prompt=prompt,
     )
-    # transcribe() es perezoso: el trabajo de GPU ocurre al recorrer los segmentos, dentro de esta medición.
-    transcript_text = "".join(s.text for s in segments_orig).strip()
+    # transcribe() es perezoso: el trabajo de GPU ocurre al recorrer los segmentos.
+    segs = [s for s in segments if keep_segment(audio, s)]
+    if not segs:
+        return "", float("-inf")
+    weights = [max(s.end - s.start, 0.01) for s in segs]
+    score = sum(s.avg_logprob * w for s, w in zip(segs, weights)) / sum(weights)
+    return collapse_repeats("".join(s.text for s in segs).strip()), score
+
+def transcribe_sync(audio, prev_text="", prev_lang=None):
+    t_start = time.perf_counter()
+    # 1. Detectar el idioma del audio original. Sin VAD aquí: transcribe() ya lo aplica abajo,
+    #    y el segmento ya llega recortado por silencios (RMS), así que pasarlo dos veces no aporta.
+    _, _, all_probs = model.detect_language(audio, vad_filter=False)
+    t_detected = time.perf_counter()
+    probs = {code: p for code, p in all_probs if code in ALLOWED_LANGS}
+    total = sum(probs.values())
+    shares = {c: (probs.get(c, 0.0) / total if total > 0 else 0.5) for c in ALLOWED_LANGS}
+    lang = max(shares, key=shares.get)
+
+    # 2. Transcripción en el idioma original
+    confident = shares[lang] >= LANG_CONFIDENT
+    if confident:
+        transcript_text, _ = run_transcribe(audio, lang, prev_text, prev_lang)
+    else:
+        results = {c: run_transcribe(audio, c, prev_text, prev_lang) for c in ALLOWED_LANGS}
+        lang = max(ALLOWED_LANGS, key=lambda c: results[c][1])
+        transcript_text = results[lang][0]
+        print(f"[IDIOMA] dudoso (es={shares['es']:.2f} en={shares['en']:.2f}) → logprob "
+              f"es={results['es'][1]:.2f} en={results['en'][1]:.2f}, anterior={prev_lang} → {lang}")
 
     timings = {"start": t_start, "detect_s": t_detected - t_start, "proc_s": time.perf_counter() - t_start}
-    return transcript_text, lang, timings
+    return transcript_text, lang, confident, timings
 
 @app.websocket("/ws/transcribe")
 async def websocket_endpoint(websocket: WebSocket):
@@ -616,6 +698,7 @@ async def websocket_endpoint(websocket: WebSocket):
     silence_s = 0.0
     prev_text = ""
     prev_lang = None
+    recent = collections.deque(maxlen=MAX_REPEATS)
 
     try:
         while True:
@@ -653,10 +736,10 @@ async def websocket_endpoint(websocket: WebSocket):
             has_speech = False
             silence_s = 0.0
 
-            # Revocar o dejar vencer un código corta también la sesión que ya estaba abierta.
+            # Eliminar o dejar vencer un código corta también la sesión que ya estaba abierta.
             info = cached_codes().get(code_hash)
             if not info or not code_status(info)[0]:
-                print(f">>> Cliente #{client_id} ({client['name']}): código vencido o revocado, cerrando. <<<")
+                print(f">>> Cliente #{client_id} ({client['name']}): código vencido o eliminado, cerrando. <<<")
                 await websocket.send_json({"error": "Tu código de acceso ha vencido."})
                 await websocket.close(code=4401)
                 break
@@ -669,7 +752,7 @@ async def websocket_endpoint(websocket: WebSocket):
             metrics.in_flight += 1
             concurrency = metrics.in_flight  # segmentos compitiendo por la GPU, incluido este
             try:
-                text, lang, timings = await loop.run_in_executor(
+                text, lang, confident, timings = await loop.run_in_executor(
                     None, transcribe_sync, audio, prev_text, prev_lang
                 )
             except Exception as e:
@@ -685,6 +768,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 print("[WHISPER] Silencio/ruido filtrado.")
                 continue
 
+            # La misma frase en segmentos seguidos (un "thank you" en bucle) también se corta tras dos veces.
+            key = normalize_text(text)
+            if len(recent) == MAX_REPEATS and all(r == key for r in recent):
+                print(f"[FILTRO] repetido, omitido: {text}")
+                continue
+            recent.append(key)
+
             prev_text = (prev_text + " " + text)[-300:] if lang == prev_lang else text
             prev_lang = lang
             client.update(segments=client["segments"] + 1, last_activity=time.time())
@@ -694,7 +784,8 @@ async def websocket_endpoint(websocket: WebSocket):
             # Enviamos únicamente la transcripción limpia y el idioma detectado al cliente
             await websocket.send_json({
                 "transcript": text,
-                "language": lang
+                "language": lang,
+                "confident": confident,
             })
 
     except WebSocketDisconnect:

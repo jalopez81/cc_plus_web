@@ -270,7 +270,8 @@ function createBlock(lang) {
   el.className = 'cap interim active';
   el.dataset.lang = baseLang(lang);
   el.innerHTML =
-    '<div class="cap-meta"><span class="time"></span><button type="button" class="split-btn" hidden title="Continue this language in a new bubble">Split</button></div><div class="src"><img class="flag" alt="" /><span class="lang"></span><span class="text"></span></div><div class="tr"></div>';
+    '<div class="cap-meta"><span class="time"></span><button type="button" class="split-btn" hidden title="Continue this language in a new bubble">Split</button></div><div class="src"><img class="flag" alt="" /><span class="lang"></span><span class="text"></span></div><div class="tr"></div>' +
+    '<div class="paraphrase" hidden><button type="button" class="paraphrase-btn" title="Summarize this message (Gemini / Groq)">Paraphrase</button><div class="summary" hidden></div></div>';
   el.querySelector('.time').textContent = formatTime(new Date());
   const flag = el.querySelector('.flag');
   const flagSrc = SPEAKER_FLAGS[baseLang(lang)];
@@ -282,7 +283,9 @@ function createBlock(lang) {
     captionsEl.querySelector('.cap').remove();
   }
   scrollToBottom();
-  return { id: ++blockCounter, el, lang: baseLang(lang), segments: [], interim: '' };
+  const block = { id: ++blockCounter, el, lang: baseLang(lang), segments: [], interim: '' };
+  blocksByEl.set(el, block);
+  return block;
 }
 
 const formatTime = (date) =>
@@ -353,6 +356,7 @@ function renderBlock(block) {
 
   fillSentences(block.el.querySelector('.text'), srcItems);
   fillSentences(block.el.querySelector('.tr'), trItems);
+  block.el.querySelector('.paraphrase').hidden = block.segments.length === 0;
   updateSplitButton(block);
   scrollToBottom();
 }
@@ -363,6 +367,41 @@ const SPLIT_THRESHOLD = 0.45; // fraction of the captions area's height
 function updateSplitButton(block) {
   const tooTall = block === currentBlock && block.el.offsetHeight > captionsEl.clientHeight * SPLIT_THRESHOLD;
   block.el.querySelector('.split-btn').hidden = !tooTall;
+}
+
+// ---------- paraphrase ----------
+
+const blocksByEl = new WeakMap();
+
+// Summarizes the translation (what the interpreter reads out); without one, the original speech.
+async function paraphraseBlock(el) {
+  const block = blocksByEl.get(el);
+  if (!block) return;
+  const translated = block.segments.map((seg) => seg.tr).filter(Boolean);
+  const [text, lang] = translated.length
+    ? [translated.join(' '), targetFor(block.lang)]
+    : [block.segments.map((seg) => seg.src).join(' '), block.lang];
+  if (!text.trim()) return;
+
+  const button = el.querySelector('.paraphrase-btn');
+  const summary = el.querySelector('.summary');
+  button.disabled = true;
+  button.textContent = 'Paraphrasing…';
+  try {
+    const result = await window.captioner.paraphrase(text, lang);
+    summary.classList.toggle('error', Boolean(result.error));
+    summary.textContent =
+      result.error === 'Paraphrase API key is not set'
+        ? 'Add a Gemini or Groq API key in Engines to paraphrase.'
+        : result.error || result.text;
+  } catch (err) {
+    summary.classList.add('error');
+    summary.textContent = `Paraphrase: ${err.message || 'request failed'}`;
+  }
+  summary.hidden = false;
+  button.disabled = false;
+  button.textContent = 'Paraphrase again';
+  if (el === captionsEl.lastElementChild) scrollToBottom();
 }
 
 function splitBlock(el) {
@@ -405,6 +444,13 @@ captionsEl.addEventListener('click', (e) => {
     splitBlock(splitBtn.closest('.cap'));
     return;
   }
+  const paraphraseBtn = e.target.closest('.paraphrase-btn');
+  if (paraphraseBtn) {
+    void paraphraseBlock(paraphraseBtn.closest('.cap'));
+    return;
+  }
+  // A drag that selected text for copying also ends in a click; don't treat it as picking a sentence.
+  if (!window.getSelection().isCollapsed) return;
   const pair = pairAt(e.target);
   if (!pair || pair === selectedPair) return;
   markPair(selectedPair, 'selected', false);
@@ -431,13 +477,14 @@ function commitBlock() {
 }
 
 // Short fragments ("OK", "sí") are often misdetected, and a missing language says nothing,
-// so only a longer fragment in another language opens a new bubble.
+// so only a longer fragment in another language opens a new bubble, unless the server is sure.
 const MIN_SWITCH_WORDS = 3;
 
-function resolveLang(language, transcript) {
+function resolveLang(language, transcript, confident = false) {
   const detected = language ? baseLang(language) : null;
   if (!currentBlock) return detected ?? 'en';
   if (!detected || detected === currentBlock.lang) return currentBlock.lang;
+  if (confident) return detected;
   return transcript.split(/\s+/).length < MIN_SWITCH_WORDS ? currentBlock.lang : detected;
 }
 
@@ -495,11 +542,11 @@ async function translateSegment(block, seg) {
   logSegment(block, seg);
 }
 
-function handleTranscript({ text, language, translation }) {
+function handleTranscript({ text, language, confident, translation }) {
   const transcript = String(text ?? '').trim();
   const translated = typeof translation === 'string' ? translation.trim() : '';
   if (!transcript) return;
-  const lang = resolveLang(language, transcript);
+  const lang = resolveLang(language, transcript, confident);
 
   if (text) resetHoldTimer();
   if (currentBlock && currentBlock.lang !== lang) {
@@ -795,6 +842,8 @@ function fillForm() {
   form.translator.value = settings.translator;
   form.myMemoryEmail.value = settings.myMemoryEmail || '';
   form.deeplKey.value = settings.deeplKey || '';
+  form.geminiKey.value = settings.geminiKey || '';
+  form.groqKey.value = settings.groqKey || '';
   syncTranslatorFields();
 }
 
@@ -837,6 +886,8 @@ function readForm() {
     translator: form.translator.value,
     myMemoryEmail: form.myMemoryEmail.value.trim(),
     deeplKey: form.deeplKey.value.trim(),
+    geminiKey: form.geminiKey.value.trim(),
+    groqKey: form.groqKey.value.trim(),
   };
 }
 
