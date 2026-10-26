@@ -23,7 +23,6 @@
             <button type="button" data-menu="file">File</button>
             <button type="button" data-menu="edit">Edit</button>
             <button type="button" data-menu="view">View</button>
-            <button type="button" id="updateBtn" title="Download the latest version">Actualizar</button>
           </nav>
           <div class="status">
             <span class="dot" id="statusDot" role="status" aria-label="Idle" title="Idle"></span>
@@ -57,7 +56,7 @@
                 <span class="sr-only">Transcription engine</span>
                 <select name="transcriptionEngine" aria-label="Transcription engine">
                   <option value="whisper">Whisper</option>
-                  <option value="deepgram">Deepgram</option>
+                  <option value="deepgram" id="deepgramOption" hidden disabled>Deepgram</option>
                 </select>
               </label>
               <label class="engine-input-label" data-engine-for="whisper">
@@ -89,11 +88,32 @@
                 <span class="sr-only">DeepL API key</span>
                 <input type="password" name="deeplKey" autocomplete="off" placeholder="DeepL API key" />
               </label>
+              <button type="button" class="help-btn" id="deeplHelpBtn" data-for="deepl" aria-expanded="false" aria-controls="deeplHelp" title="Cómo conseguir una API key gratis de DeepL">?</button>
               <label class="engine-input-label" data-for="mymemory auto">
                 <span class="sr-only">MyMemory email (optional)</span>
                 <input type="email" name="myMemoryEmail" autocomplete="off" placeholder="MyMemory email (optional)" />
               </label>
             </div>
+            <div class="help-panel" id="deeplHelp" hidden>
+              <div class="help-panel-header">
+                <strong>API key gratis de DeepL</strong>
+                <button type="button" class="popover-close" id="closeDeeplHelp" aria-label="Cerrar ayuda">✕</button>
+              </div>
+              <ol>
+                <li>Abre <button type="button" class="link-btn" data-href="https://www.deepl.com/pro-api">deepl.com/pro-api</button> y elige el plan <b>DeepL API Free</b>.</li>
+                <li>Crea tu cuenta. DeepL pide una tarjeta solo para verificar tu identidad; el plan Free no cobra.</li>
+                <li>En tu cuenta, abre la pestaña <b>API Keys</b> y copia la clave (termina en <code>:fx</code>).</li>
+                <li>Pégala en este campo y pulsa <b>Done</b>.</li>
+              </ol>
+              <p>El plan gratis incluye 500.000 caracteres al mes.</p>
+            </div>
+            <fieldset class="advanced-panel" id="advancedPanel" hidden>
+              <legend>Configuración avanzada</legend>
+              <label class="advanced-option">
+                <input type="checkbox" id="showDeepgramToggle" />
+                <span>Mostrar Deepgram</span>
+              </label>
+            </fieldset>
             <div class="settings-actions">
               <button type="submit" class="primary">Done</button>
             </div>

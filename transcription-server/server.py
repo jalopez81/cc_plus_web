@@ -139,10 +139,10 @@ def cli():
     exa = sub.add_parser("extend-all", help="Compensar días a todos tras una caída del servicio")
     exa.add_argument("--days", type=int, required=True)
     push = sub.add_parser("push-codes", help="Subir authorized_codes.json de este equipo al servidor")
-    push.add_argument("server", help="p. ej. https://<pod>-8000.proxy.runpod.net")
+    push.add_argument("server", help="p. ej. https://whisper.tudominio.com o https://<pod>-8000.proxy.runpod.net")
     push.add_argument("--force", action="store_true", help="Sobrescribir aunque el servidor tenga códigos que aquí no están")
     pull = sub.add_parser("pull-codes", help="Descargar los códigos del servidor a este equipo")
-    pull.add_argument("server", help="p. ej. https://<pod>-8000.proxy.runpod.net")
+    pull.add_argument("server", help="p. ej. https://whisper.tudominio.com o https://<pod>-8000.proxy.runpod.net")
     args = parser.parse_args()
 
     load_admin_token()  # crea admin_token.txt en el Mac para subirlo al pod junto con los códigos
@@ -211,6 +211,20 @@ STARTED_AT = time.time()
 # Clientes conectados ahora mismo: id -> info visible en el panel de admin
 clients: dict[int, dict] = {}
 client_ids = itertools.count(1)
+
+# Una sola conexión por código: hash del código -> (id del cliente, websocket).
+# Gana la conexión más nueva; así una sesión colgada (portátil cerrado, red caída) no bloquea al usuario.
+active_by_code: dict[str, tuple[int, WebSocket]] = {}
+
+async def replace_previous(prev_id: int, prev_ws: WebSocket):
+    if prev_id in clients:
+        clients[prev_id]["replaced"] = True
+        print(f">>> Cliente #{prev_id} ({clients[prev_id]['name']}): mismo código conectado en otro equipo, cerrando. <<<")
+    try:
+        await prev_ws.send_json({"error": "Tu código de acceso se conectó desde otro equipo; esta sesión se cerró."})
+        await prev_ws.close(code=4409)
+    except Exception:
+        pass  # ya estaba cerrada
 
 def session_record(c: dict, end: float) -> dict:
     return {"code_hash": c["code_hash_full"], "name": c["name"], "start": round(c["connected_at"]),
@@ -590,6 +604,11 @@ async def websocket_endpoint(websocket: WebSocket):
         "audio_s": 0.0,
     }
     print(f">>> Cliente #{client_id} conectado: {info['name']} ({client['ip']}) <<<")
+    # Se registra antes de esperar el cierre de la anterior, para que dos conexiones simultáneas no se cuelen.
+    previous = active_by_code.get(code_hash)
+    active_by_code[code_hash] = (client_id, websocket)
+    if previous:
+        await replace_previous(*previous)
     loop = asyncio.get_running_loop()
 
     pcm = bytearray()
@@ -680,17 +699,28 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         pass
+    except Exception:
+        # Una sesión reemplazada puede fallar al recibir/enviar sobre el socket ya cerrado: es lo esperado.
+        if not client.get("replaced"):
+            raise
     finally:
         clients.pop(client_id, None)
+        if active_by_code.get(code_hash, (None,))[0] == client_id:
+            del active_by_code[code_hash]
         log_session(client)
         print(f">>> Cliente #{client_id} ({client['name']}) desconectado. <<<")
 
 if __name__ == "__main__":
+    # PUBLIC_URL lo define start-vast.sh (Cloudflare Tunnel); en RunPod se deduce del proxy del pod.
     pod_id = os.environ.get("RUNPOD_POD_ID")
+    public_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
+    if not public_url and pod_id:
+        public_url = f"https://{pod_id}-8000.proxy.runpod.net"
     # Cada valor va solo en su línea para poder copiarlo con doble/triple clic sin arrastrar la etiqueta.
-    if pod_id:
-        print(f"\n * URL del cliente:\n\nwss://{pod_id}-8000.proxy.runpod.net/ws/transcribe\n")
-        print(f" * URL admin:\n\nhttps://{pod_id}-8000.proxy.runpod.net/api/admin/stats\n")
+    if public_url:
+        host = public_url.removeprefix("https://")
+        print(f"\n * URL del cliente:\n\nwss://{host}/ws/transcribe\n")
+        print(f" * URL admin:\n\n{public_url}/api/admin/stats\n")
     print(f" * Token admin:\n\n{ADMIN_TOKEN}\n")
     if os.path.exists(CODES_FILE):
         print(f" * Códigos autorizados: {len(load_codes())}\n")

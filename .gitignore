@@ -8,3 +8,6 @@ transcription-server/authorized_codes.json
 transcription-server/admin_token.txt
 transcription-server/sessions.jsonl
 transcription-server/metrics.jsonl
+
+# Local notes; may contain secrets (Cloudflare tunnel token)
+transcription-server/misc.txt

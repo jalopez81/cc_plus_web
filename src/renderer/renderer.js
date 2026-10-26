@@ -725,7 +725,67 @@ function syncTranslatorFields() {
   for (const el of form.querySelectorAll('[data-engine-for]')) {
     el.hidden = !el.dataset.engineFor.split(' ').includes(form.transcriptionEngine.value);
   }
+  if (form.translator.value !== 'deepl') setDeeplHelpOpen(false);
 }
+
+// ---------- DeepL help ----------
+
+function setDeeplHelpOpen(open) {
+  $('deeplHelp').hidden = !open;
+  $('deeplHelpBtn').setAttribute('aria-expanded', String(open));
+}
+
+$('deeplHelpBtn').addEventListener('click', () => setDeeplHelpOpen($('deeplHelp').hidden));
+$('closeDeeplHelp').addEventListener('click', () => setDeeplHelpOpen(false));
+$('deeplHelp').addEventListener('click', (e) => {
+  const link = e.target.closest('[data-href]');
+  if (link) window.captioner.openExternal(link.dataset.href);
+});
+
+// ---------- hidden advanced settings ----------
+
+// Typing this in the call notes reveals the advanced panel; typing it again hides it.
+const SECRET_CODE = '#lcp-config';
+const advancedPanel = $('advancedPanel');
+const deepgramOption = $('deepgramOption');
+const showDeepgramToggle = $('showDeepgramToggle');
+const notesInput = $('callNotes');
+
+function applyDeepgramVisibility() {
+  const show = Boolean(settings.showDeepgram);
+  deepgramOption.hidden = !show;
+  deepgramOption.disabled = !show;
+  showDeepgramToggle.checked = show;
+}
+
+notesInput.addEventListener('input', () => {
+  if (!notesInput.value.includes(SECRET_CODE)) return;
+  notesInput.value = notesInput.value.replace(SECRET_CODE, '');
+  notesInput.dispatchEvent(new Event('input')); // lets the notes autosave drop the code too
+  advancedPanel.hidden = !advancedPanel.hidden;
+  if (!advancedPanel.hidden) openSettings();
+  showToast(advancedPanel.hidden ? 'Configuración avanzada oculta' : 'Configuración avanzada activada');
+});
+
+showDeepgramToggle.addEventListener('change', async () => {
+  const show = showDeepgramToggle.checked;
+  // Hiding Deepgram while it is the engine falls back to Whisper so nothing points at a hidden option.
+  const fallBack = !show && settings.transcriptionEngine === 'deepgram';
+  try {
+    settings = await window.captioner.setSettings({
+      showDeepgram: show,
+      ...(fallBack && { transcriptionEngine: 'whisper' }),
+    });
+  } catch (err) {
+    setStatus('error', `Could not save settings: ${err.message || 'unknown error'}`);
+    return;
+  }
+  if (!show && form.transcriptionEngine.value === 'deepgram') form.transcriptionEngine.value = 'whisper';
+  applyDeepgramVisibility();
+  syncTranslatorFields();
+  applyAppearance();
+  if (fallBack) await restartIfLive();
+});
 
 function fillForm() {
   form.transcriptionEngine.value = settings.transcriptionEngine;
@@ -893,23 +953,6 @@ $('winClose').addEventListener('click', () => window.captioner.close());
 $('winMinimize').addEventListener('click', () => window.captioner.minimize());
 collapseBtn.addEventListener('click', toggleCollapse);
 
-const updateBtn = $('updateBtn');
-updateBtn.addEventListener('click', async () => {
-  updateBtn.disabled = true;
-  updateBtn.textContent = 'Actualizando…';
-  try {
-    const result = await window.captioner.update();
-    showToast(result.message);
-    if (result.status === 'updated') {
-      const prompt = session ? 'Restart now to finish? This stops the current capture.' : 'Restart now to finish updating?';
-      if (window.confirm(`${result.message}\n\n${prompt}`)) window.captioner.relaunch();
-    }
-  } finally {
-    updateBtn.disabled = false;
-    updateBtn.textContent = 'Actualizar';
-  }
-});
-
 for (const button of document.querySelectorAll('.app-menu [data-menu]')) {
   button.addEventListener('click', () => {
     const rect = button.getBoundingClientRect();
@@ -964,6 +1007,11 @@ const MENU_ACTIONS = {
 
 window.captioner.onMenuAction((action) => MENU_ACTIONS[action]?.());
 
+// A saved Deepgram engine can't stay selected while its option is hidden.
+if (!settings.showDeepgram && settings.transcriptionEngine === 'deepgram') {
+  settings = await window.captioner.setSettings({ transcriptionEngine: 'whisper' });
+}
+applyDeepgramVisibility();
 fillForm();
 closeSettings();
 applyAppearance();

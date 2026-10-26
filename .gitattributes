@@ -1,0 +1,2 @@
+# Shell scripts run on Linux GPU servers; CRLF would break bash there.
+*.sh text eol=lf

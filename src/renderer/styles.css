@@ -1993,3 +1993,99 @@ body:not(.translator-off):not(.hide-translation) .cap.active .tr:empty {
   width: 90%;
   max-width: none;
 }
+
+/* DeepL key help */
+.help-btn {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #3d4b6b;
+  border-radius: 50%;
+  background: #1f293e;
+  color: #a8b5cd;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.help-btn[hidden] {
+  display: none;
+}
+
+.help-btn:hover,
+.help-btn[aria-expanded='true'] {
+  border-color: #12a0a0;
+  background: #12a0a0;
+  color: #fff;
+}
+
+.help-panel {
+  padding: 8px 10px;
+  border: 1px solid rgba(18, 160, 160, 0.45);
+  border-radius: 6px;
+  background: #161e2f;
+  color: #c3ccdd;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.help-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #e8ecf6;
+}
+
+.help-panel ol {
+  margin: 6px 0 4px;
+  padding-left: 18px;
+}
+
+.help-panel p {
+  margin: 0;
+  color: #8b98b3;
+}
+
+.help-panel code {
+  color: #2ec4b6;
+}
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #5ac8fa;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.link-btn:hover {
+  background: none;
+  color: #8ddcff;
+}
+
+/* Advanced panel revealed by the secret code in the call notes */
+.advanced-panel {
+  margin: 0;
+  padding: 6px 10px 8px;
+  border: 1px dashed #3d4b6b;
+  border-radius: 6px;
+}
+
+.advanced-panel legend {
+  padding: 0 4px;
+  color: #6d7b96;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings form .advanced-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #c3ccdd;
+  cursor: pointer;
+}

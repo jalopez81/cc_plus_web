@@ -13,8 +13,6 @@ const {
 } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFile } = require('node:child_process');
-const { promisify } = require('node:util');
 const { translate } = require('./translate');
 
 const SECRET_KEYS = ['deeplKey', 'deepgramKey', 'accessCode'];
@@ -32,7 +30,18 @@ const DEFAULT_SETTINGS = {
   showTranslation: true,
   sentenceLines: true,
   micMonitor: true,
+  showDeepgram: false,
+  uiZoom: 1.1,
 };
+
+// Whole-UI zoom (View menu / Ctrl +, -, 0). Defaults a bit above 100% so the compact chrome stays readable.
+const ZOOM_DEFAULT = DEFAULT_SETTINGS.uiZoom;
+const ZOOM_MIN = 0.8;
+const ZOOM_MAX = 1.6;
+const ZOOM_STEP = 0.1;
+
+// Only these hosts may be opened in the system browser from the renderer.
+const EXTERNAL_HOSTS = new Set(['www.deepl.com', 'deepl.com']);
 
 const MIN_WIDTH = 420;
 const MIN_HEIGHT = 360;
@@ -154,10 +163,21 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      zoomFactor: loadSettings().uiZoom,
     },
   });
 
   win.removeMenu();
+  // A reload resets the zoom, so reapply the saved one; the hidden menu also means zoom keys need wiring.
+  win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(loadSettings().uiZoom));
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt) return;
+    const action = { '=': 'in', '+': 'in', '-': 'out', 0: 'reset' }[input.key];
+    if (!action) return;
+    event.preventDefault();
+    if (action === 'reset') setZoom(ZOOM_DEFAULT);
+    else zoomBy(action === 'in' ? ZOOM_STEP : -ZOOM_STEP);
+  });
   if (saved?.maximized) win.maximize();
   let saveTimer;
   const scheduleSave = () => {
@@ -213,6 +233,18 @@ async function openLogsFolder() {
   await shell.openPath(logsDir());
 }
 
+// ---------- zoom ----------
+
+function setZoom(factor) {
+  const zoom = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, factor)) * 100) / 100;
+  win.webContents.setZoomFactor(zoom);
+  saveSettings({ ...loadSettings(), uiZoom: zoom });
+}
+
+const zoomBy = (delta) => setZoom(win.webContents.getZoomFactor() + delta);
+// The renderer measures in CSS pixels; window sizes and menu positions are in device-independent pixels.
+const toWindowPx = (cssPx) => cssPx * (win?.webContents.getZoomFactor() ?? 1);
+
 // ---------- collapse ----------
 
 let expandedHeight = null;
@@ -225,7 +257,7 @@ function setCollapsed(collapsed, contentHeight) {
     expandedHeight = win.getBounds().height;
     const [width] = win.getContentSize();
     win.setMinimumSize(Math.min(MIN_WIDTH, workArea.width), 0);
-    win.setContentSize(width, Math.ceil(contentHeight));
+    win.setContentSize(width, Math.ceil(toWindowPx(contentHeight)));
     win.setResizable(false);
   } else {
     const bounds = win.getBounds();
@@ -294,6 +326,16 @@ function buildMenu(name) {
       { label: 'Larger text', click: () => sendMenuAction('font-up') },
       { label: 'Smaller text', click: () => sendMenuAction('font-down') },
       { type: 'separator' },
+      // registerAccelerator: false — the keys are handled in before-input-event; these only show the hint.
+      { label: 'Zoom in', accelerator: 'CmdOrCtrl+=', registerAccelerator: false, click: () => zoomBy(ZOOM_STEP) },
+      { label: 'Zoom out', accelerator: 'CmdOrCtrl+-', registerAccelerator: false, click: () => zoomBy(-ZOOM_STEP) },
+      {
+        label: `Actual size (${Math.round(ZOOM_DEFAULT * 100)}%) · now ${Math.round(win.webContents.getZoomFactor() * 100)}%`,
+        accelerator: 'CmdOrCtrl+0',
+        registerAccelerator: false,
+        click: () => setZoom(ZOOM_DEFAULT),
+      },
+      { type: 'separator' },
       {
         label: 'Always on top',
         type: 'checkbox',
@@ -328,48 +370,7 @@ function registerDisplayMediaHandler() {
   });
 }
 
-// ---------- updates ----------
-// Temporary updater for users running `npm start` from a git clone: fast-forwards to the tracked branch.
-
-const REPO_DIR = path.join(__dirname, '..');
-const run = promisify(execFile);
-const git = async (...args) => (await run('git', args, { cwd: REPO_DIR, timeout: 60_000 })).stdout.trim();
-
-async function checkForUpdates() {
-  if (app.isPackaged) return { status: 'error', message: 'Updates only work when running from the git checkout.' };
-  try {
-    await git('rev-parse', '--git-dir');
-  } catch {
-    return { status: 'error', message: 'Git is not installed, or this folder is not a git clone.' };
-  }
-  try {
-    const upstream = await git('rev-parse', '--abbrev-ref', '@{u}');
-    if (await git('status', '--porcelain', '--untracked-files=no')) {
-      return { status: 'error', message: 'This copy has local changes; updating could overwrite them.' };
-    }
-    await git('fetch', '--quiet');
-    const behind = Number(await git('rev-list', '--count', 'HEAD..@{u}'));
-    if (behind === 0) return { status: 'current', message: 'You already have the latest version.' };
-
-    const changed = (await git('diff', '--name-only', 'HEAD', '@{u}')).split('\n');
-    await git('merge', '--ff-only', '--quiet', '@{u}');
-    if (changed.some((file) => file === 'package.json' || file === 'package-lock.json')) {
-      // npm is a .cmd script on Windows, which needs a shell to run.
-      await run('npm', ['install', '--no-audit', '--no-fund'], { cwd: REPO_DIR, timeout: 600_000, shell: process.platform === 'win32' });
-    }
-    return { status: 'updated', message: `Updated with ${behind} change(s) from ${upstream}.` };
-  } catch (err) {
-    const detail = (err.stderr || err.message || '').toString().trim().split('\n')[0];
-    return { status: 'error', message: `Update failed: ${detail}` };
-  }
-}
-
 function registerIpc() {
-  ipcMain.handle('app:update', () => checkForUpdates());
-  ipcMain.on('app:relaunch', () => {
-    app.relaunch();
-    app.exit(0);
-  });
   ipcMain.handle('settings:get', () => loadSettings());
   ipcMain.handle('settings:set', (_e, patch) => {
     const next = { ...loadSettings(), ...patch };
@@ -385,6 +386,12 @@ function registerIpc() {
   );
   ipcMain.on('window:close', () => app.quit());
   ipcMain.on('window:minimize', () => win?.minimize());
+  ipcMain.on('app:open-external', (_e, url) => {
+    try {
+      const { protocol, hostname } = new URL(url);
+      if (protocol === 'https:' && EXTERNAL_HOSTS.has(hostname)) void shell.openExternal(url);
+    } catch {}
+  });
   ipcMain.handle('log:new-call', () => logNewCall());
   ipcMain.on('log:append', (_e, text) => {
     if (typeof text === 'string' && text) appendLog(text);
@@ -393,7 +400,7 @@ function registerIpc() {
     setCollapsed(Boolean(collapsed), Number(contentHeight) || 0)
   );
   ipcMain.on('menu:popup', (_e, name, x, y) => {
-    buildMenu(name)?.popup({ window: win, x: Math.round(x), y: Math.round(y) });
+    buildMenu(name)?.popup({ window: win, x: Math.round(toWindowPx(x)), y: Math.round(toWindowPx(y)) });
   });
 }
 
