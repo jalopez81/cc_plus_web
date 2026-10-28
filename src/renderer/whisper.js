@@ -1,3 +1,5 @@
+import { withCodeHint } from './access.js';
+
 function float32ToInt16(samples) {
   const out = new Int16Array(samples.length);
   for (let i = 0; i < samples.length; i += 1) {
@@ -8,21 +10,30 @@ function float32ToInt16(samples) {
 }
 
 export class WhisperStream {
-  constructor({ url, accessCode, onTranscript, onStatus }) {
+  constructor({ url, accessCode, onTranscript, onStatus, onWelcome }) {
     this.url = url;
     this.accessCode = accessCode;
     this.onTranscript = onTranscript;
     this.onStatus = onStatus;
+    this.onWelcome = onWelcome; // called with { name, usedS } once the server accepts the code
     this.ws = null;
     this.audioContext = null;
     this.processor = null;
     this.recording = false;
     this.muted = false;
+    this.canFlush = false; // set by the welcome message; older servers drop the socket on text frames
   }
 
   // Muted streams send silence instead of stopping, so the server's VAD flushes the pending utterance.
   setMuted(muted) {
     this.muted = muted;
+  }
+
+  // Asks the server to transcribe its buffered audio now instead of waiting for a pause. False if unsupported.
+  flush() {
+    if (!this.canFlush || this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify({ flush: true }));
+    return true;
   }
 
   async start(audioStream) {
@@ -51,7 +62,15 @@ export class WhisperStream {
       try {
         const data = JSON.parse(event.data);
         if (data?.error) {
-          this.onStatus('error', String(data.error));
+          this.onStatus('error', withCodeHint(String(data.error)));
+          return;
+        }
+        if (data?.ok) {
+          this.canFlush = data.flush === true;
+          this.onWelcome?.({
+            name: data.name ? String(data.name) : '',
+            usedS: Number.isFinite(data.used_s) ? data.used_s : null,
+          });
           return;
         }
         if (data && typeof data.transcript === 'string') {
@@ -59,6 +78,7 @@ export class WhisperStream {
             text: data.transcript,
             language: data.language || 'en',
             confident: data.confident === true,
+            uncertain: Array.isArray(data.uncertain) ? data.uncertain.filter(Number.isInteger) : [],
             translation: typeof data.translation === 'string' ? data.translation : '',
             translation_language: data.translation_language ?? null,
           });

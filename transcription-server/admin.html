@@ -6,6 +6,13 @@
     <title>Admin Dashboard - SaaS Captioning</title>
     <!-- Tailwind CSS para un diseño limpio y moderno -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Un tono distinto por servidor para no confundirlos: azul verdoso = Control/Deepgram, morado = GPU/Whisper. */
+        body[data-server] { transition: background-color 0.3s; border-top: 4px solid var(--server-accent); min-height: 100vh; }
+        body[data-server="control"] { background-color: #0c1d22; --server-accent: #14b8a6; }
+        body[data-server="gpu"] { background-color: #1a1229; --server-accent: #a855f7; }
+        #serverSel { border-color: var(--server-accent); }
+    </style>
 </head>
 <body class="bg-gray-900 text-gray-100 font-sans p-6">
 
@@ -17,6 +24,7 @@
                 <p class="text-sm text-gray-400">Monitoreo de infraestructura y concurrencia en tiempo real</p>
             </div>
             <div class="flex items-center space-x-2">
+                <button id="soundBtn" onclick="alternarSonido()" class="mr-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 text-xs font-semibold px-3 py-1.5 rounded-lg transition" title="Sonido al conectarse o desconectarse un usuario"></button>
                 <span class="inline-block w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
                 <span class="text-sm font-semibold text-green-400" id="serverStatus">Conectado</span>
             </div>
@@ -24,13 +32,28 @@
 
         <!-- Configuración de Conexión -->
         <div class="bg-gray-800 p-4 rounded-xl mb-6 flex gap-4 items-center">
-            <label class="text-sm font-medium text-gray-300 whitespace-nowrap">URL del Backend:</label>
-            <input type="text" id="apiUrl" value="https://wl4u6khi2kn8r7-8000.proxy.runpod.net/api/admin/stats" 
+            <label class="text-sm font-medium text-gray-300 whitespace-nowrap" for="serverSel">Servidor:</label>
+            <select id="serverSel" class="bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500">
+                <option value="control">Control · Deepgram</option>
+                <option value="gpu">GPU · Whisper</option>
+            </select>
+            <input type="text" id="apiUrl" value="" 
                    class="bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 w-full focus:outline-none focus:border-blue-500">
             <label class="text-sm font-medium text-gray-300 whitespace-nowrap">Token admin:</label>
-            <input type="password" id="adminToken" placeholder="Se imprime al arrancar server.py"
-                   class="bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 w-64 focus:outline-none focus:border-blue-500">
+            <div class="relative">
+                <input type="password" id="adminToken" placeholder="Token admin de este servidor"
+                       class="bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-lg pl-3 pr-9 py-2 w-64 font-mono focus:outline-none focus:border-blue-500">
+                <button type="button" id="tokenEye" onclick="alternarToken()" title="Mostrar token"
+                        class="absolute right-1 top-1/2 -translate-y-1/2 px-2 text-gray-400 hover:text-white">👁</button>
+            </div>
             <button onclick="actualizarDatos()" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">Actualizar</button>
+        </div>
+
+        <!-- URL que los clientes pegan en la app (solo GPU: Deepgram no la necesita) -->
+        <div id="clientUrlRow" class="hidden bg-gray-800 px-4 py-3 rounded-xl -mt-3 mb-6 flex gap-3 items-center">
+            <span class="text-sm font-medium text-gray-300 whitespace-nowrap">URL del cliente:</span>
+            <code id="clientUrl" class="flex-1 bg-gray-900 border border-gray-700 text-purple-300 text-sm rounded-lg px-3 py-2 truncate select-all"></code>
+            <button id="copyClientUrlBtn" onclick="copiarUrlCliente()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">Copiar</button>
         </div>
 
         <!-- Tarjetas de Métricas Principales -->
@@ -85,11 +108,38 @@
             </div>
         </div>
 
+        <!-- Clientes Deepgram: transcriben con Deepgram, pero validan su código aquí -->
+        <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
+            <div class="flex justify-between items-baseline mb-4">
+                <h3 class="text-lg font-semibold text-white">Clientes Deepgram</h3>
+                <span class="text-xs text-gray-500">No usan la GPU: el audio va directo a Deepgram</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                    <thead class="text-xs uppercase text-gray-400 border-b border-gray-700">
+                        <tr>
+                            <th class="py-2 pr-4">#</th>
+                            <th class="py-2 pr-4">Nombre</th>
+                            <th class="py-2 pr-4">Código (hash)</th>
+                            <th class="py-2 pr-4">IP</th>
+                            <th class="py-2 pr-4">Vence</th>
+                            <th class="py-2 pr-4">Conectado</th>
+                            <th class="py-2">Último ping</th>
+                        </tr>
+                    </thead>
+                    <tbody id="deepgramBody">
+                        <tr><td colspan="7" class="py-4 text-gray-500">Sin clientes de Deepgram conectados.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- Códigos de acceso (suscripciones) -->
         <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 mb-8">
             <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
                 <h3 class="text-lg font-semibold text-white">Códigos de Acceso</h3>
                 <div class="flex gap-2">
+                    <button id="syncGpuBtn" onclick="enviarCodigosAlGpu()" class="hidden bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition" title="Reemplaza la lista de códigos del servidor GPU por la de este servidor de control">Enviar códigos al GPU</button>
                     <button onclick="abrirDialogo('all')" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">Compensar días a todos</button>
                     <button onclick="descargarRespaldo()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">Descargar respaldo</button>
                     <button onclick="document.getElementById('importFile').click()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition">Importar respaldo</button>
@@ -322,10 +372,54 @@
     </div>
 
     <script>
+        // Dos servidores con la misma API: el de control (Cloudflare, siempre encendido: códigos y Deepgram)
+        // y el GPU (server.py, solo cuando está alquilado: Whisper). Cada uno guarda su URL y su token.
         const tokenInput = document.getElementById('adminToken');
-        try { tokenInput.value = localStorage.getItem('adminToken') || ''; } catch {}
-        tokenInput.addEventListener('change', () => {
-            try { localStorage.setItem('adminToken', tokenInput.value.trim()); } catch {}
+        const urlField = document.getElementById('apiUrl');
+        const serverSel = document.getElementById('serverSel');
+        const PERFILES_POR_DEFECTO = {
+            control: { url: 'https://control.life-caption-plus.bid/api/admin/stats', token: '' },
+            gpu: { url: 'https://whisper.life-caption-plus.bid/api/admin/stats', token: '' },
+        };
+        let perfiles = structuredClone(PERFILES_POR_DEFECTO);
+        try {
+            Object.assign(perfiles, JSON.parse(localStorage.getItem('adminProfiles') || '{}'));
+            // El token de antes de haber dos servidores era el del GPU.
+            if (!perfiles.gpu.token) perfiles.gpu.token = localStorage.getItem('adminToken') || '';
+            serverSel.value = localStorage.getItem('adminServer') || 'control';
+        } catch {}
+
+        function guardarPerfiles() {
+            perfiles[serverSel.value] = { url: urlField.value.trim(), token: tokenInput.value.trim() };
+            try { localStorage.setItem('adminProfiles', JSON.stringify(perfiles)); } catch {}
+        }
+
+        function cargarPerfil() {
+            const perfil = perfiles[serverSel.value];
+            urlField.value = perfil.url;
+            tokenInput.value = perfil.token;
+            document.getElementById('syncGpuBtn').classList.toggle('hidden', serverSel.value !== 'control');
+            document.body.dataset.server = serverSel.value;
+            mostrarUrlCliente();
+            document.title = `${serverSel.value === 'control' ? 'Deepgram' : 'Whisper'} · Admin Dashboard`;
+        }
+        cargarPerfil();
+
+        for (const campo of [tokenInput, urlField]) {
+            campo.addEventListener('change', () => {
+                guardarPerfiles();
+                actualizarDatos();
+            });
+        }
+        serverSel.addEventListener('change', () => {
+            try { localStorage.setItem('adminServer', serverSel.value); } catch {}
+            cargarPerfil();
+            // Los datos del otro servidor no deben quedarse en pantalla mientras llega la primera lectura.
+            renderClientes([]);
+            renderDeepgram([]);
+            conectadosAntes = null; // los del otro servidor no cuentan como conexiones nuevas
+            ultimoUso = 0;
+            ultimasMetricas = 0;
             actualizarDatos();
         });
 
@@ -353,6 +447,24 @@
                     <td class="py-2 pr-4 ${c.idle_s > 300 ? 'text-yellow-400' : ''}">${duracion(c.idle_s)}</td>
                     <td class="py-2 pr-4">${c.segments}</td>
                     <td class="py-2">${duracion(Math.round(c.audio_s))}</td>
+                </tr>`).join('');
+        }
+
+        function renderDeepgram(clients) {
+            const body = document.getElementById('deepgramBody');
+            if (!clients.length) {
+                body.innerHTML = '<tr><td colspan="7" class="py-4 text-gray-500">Sin clientes de Deepgram conectados.</td></tr>';
+                return;
+            }
+            body.innerHTML = clients.map((c) => `
+                <tr class="border-b border-gray-700/50">
+                    <td class="py-2 pr-4 text-gray-500">${c.id}</td>
+                    <td class="py-2 pr-4 font-semibold text-white">${escapeHtml(c.name)}</td>
+                    <td class="py-2 pr-4 font-mono text-xs text-gray-400">${escapeHtml(c.code_hash)}…</td>
+                    <td class="py-2 pr-4 font-mono text-xs" title="${escapeHtml(c.user_agent)}">${escapeHtml(c.ip)}</td>
+                    <td class="py-2 pr-4">${c.expires ? escapeHtml(c.expires.slice(0, 10)) : '—'}</td>
+                    <td class="py-2 pr-4">${duracion(c.connected_s)}</td>
+                    <td class="py-2 ${c.ping_s > 45 ? 'text-yellow-400' : ''}">hace ${duracion(c.ping_s)}</td>
                 </tr>`).join('');
         }
 
@@ -715,7 +827,7 @@
                     <td class="py-2 pr-4 font-semibold text-white">${escapeHtml(c.name)}</td>
                     <td class="py-2 pr-4 text-gray-400">${escapeHtml(c.email || '—')}</td>
                     <td class="py-2 pr-4 whitespace-nowrap">${c.code
-                        ? `<code class="font-mono text-xs text-gray-300">${escapeHtml(c.code.slice(0, 6))}…</code>
+                        ? `<code class="font-mono text-xs text-gray-300 select-all">${escapeHtml(c.code)}</code>
                            <button onclick="copiarDeTabla('${c.hash}', this)" class="text-green-400 hover:text-green-300 text-xs font-semibold px-2">Copiar</button>`
                         : `<span class="font-mono text-xs text-gray-500" title="Creado antes de que el servidor guardara los códigos: solo existe su hash.">${escapeHtml(c.code_hash)}… · no recuperable</span>`}</td>
                     <td class="py-2 pr-4 ${c.valid ? 'text-green-400' : 'text-red-400'}">${escapeHtml(c.status)}</td>
@@ -751,6 +863,43 @@
                 avisoCodigos(`No se pudo crear el código: ${err.message}`, true);
             }
         });
+
+        function alternarToken() {
+            const visible = tokenInput.type === 'password';
+            tokenInput.type = visible ? 'text' : 'password';
+            const eye = document.getElementById('tokenEye');
+            eye.textContent = visible ? '🙈' : '👁';
+            eye.title = visible ? 'Ocultar token' : 'Mostrar token';
+        }
+
+        // La URL del cliente sale del mismo host que la API: https://host/api/admin/stats → wss://host/ws/transcribe
+        function urlCliente() {
+            try {
+                const api = new URL(urlField.value.trim());
+                return `${api.protocol === 'http:' ? 'ws:' : 'wss:'}//${api.host}/ws/transcribe`;
+            } catch {
+                return '';
+            }
+        }
+
+        function mostrarUrlCliente() {
+            const url = serverSel.value === 'gpu' ? urlCliente() : '';
+            document.getElementById('clientUrl').textContent = url;
+            document.getElementById('clientUrlRow').classList.toggle('hidden', !url);
+        }
+        urlField.addEventListener('input', mostrarUrlCliente);
+
+        async function copiarUrlCliente() {
+            const url = urlCliente();
+            const boton = document.getElementById('copyClientUrlBtn');
+            try {
+                await navigator.clipboard.writeText(url);
+                boton.innerText = '¡Copiado!';
+                setTimeout(() => { boton.innerText = 'Copiar'; }, 1500);
+            } catch (err) {
+                prompt('Copia la URL del cliente:', url);
+            }
+        }
 
         async function copiarCodigo() {
             await navigator.clipboard.writeText(document.getElementById('newCode').innerText);
@@ -874,6 +1023,26 @@
             }
         });
 
+        // El servidor de control es la lista maestra; el GPU recibe una copia exacta cuando lo enciendes.
+        async function enviarCodigosAlGpu() {
+            const gpu = perfiles.gpu;
+            if (!gpu.url || !gpu.token) return avisoCodigos('Configura primero la URL y el token del servidor GPU (elige "GPU · Whisper" arriba).', true);
+            try {
+                const codes = await api('/api/admin/codes');
+                if (!confirm(`Se reemplazará la lista del servidor GPU por estos ${Object.keys(codes).length} código(s).\nLos que solo existan en el GPU dejarán de funcionar allí.`)) return;
+                const response = await fetch(gpu.url.replace(/\/api\/admin\/stats\/?$/, '') + '/api/admin/codes', {
+                    method: 'PUT',
+                    headers: { Authorization: `Bearer ${gpu.token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(codes),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+                avisoCodigos(`Códigos enviados al servidor GPU: ${data.codes}.`);
+            } catch (err) {
+                avisoCodigos(`No se pudieron enviar al GPU (¿está encendido?): ${err.message}`, true);
+            }
+        }
+
         async function descargarRespaldo() {
             try {
                 const codes = await api('/api/admin/codes');
@@ -887,6 +1056,65 @@
             } catch (err) {
                 avisoCodigos(`No se pudo descargar el respaldo: ${err.message}`, true);
             }
+        }
+
+        // ---- Sonido al conectarse / desconectarse un usuario ----
+        // Tonos generados con Web Audio (sin archivos). El navegador solo deja sonar tras un clic en la página.
+        let sonidoActivo = true;
+        try { sonidoActivo = localStorage.getItem('adminSound') !== 'off'; } catch {}
+        let audioCtx = null;
+        let conectadosAntes = null; // Map code_hash → nombre de la lectura anterior; null = primera lectura
+
+        function pintarBotonSonido() {
+            document.getElementById('soundBtn').innerText = sonidoActivo ? '🔔 Sonido' : '🔕 Silencio';
+        }
+        pintarBotonSonido();
+
+        function desbloquearAudio() {
+            audioCtx ??= new AudioContext();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+        document.addEventListener('pointerdown', desbloquearAudio, { once: true });
+
+        function alternarSonido() {
+            sonidoActivo = !sonidoActivo;
+            try { localStorage.setItem('adminSound', sonidoActivo ? 'on' : 'off'); } catch {}
+            pintarBotonSonido();
+            if (sonidoActivo) tocarTonos([660, 880]);
+        }
+
+        // Dos notas cortas: subiendo = se conectó, bajando = se desconectó.
+        function tocarTonos(frecuencias) {
+            if (!sonidoActivo) return;
+            desbloquearAudio();
+            const inicio = audioCtx.currentTime;
+            frecuencias.forEach((hz, i) => {
+                const osc = audioCtx.createOscillator();
+                const vol = audioCtx.createGain();
+                const t = inicio + i * 0.16;
+                osc.type = 'sine';
+                osc.frequency.value = hz;
+                vol.gain.setValueAtTime(0.0001, t);
+                vol.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+                vol.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+                osc.connect(vol).connect(audioCtx.destination);
+                osc.start(t);
+                osc.stop(t + 0.16);
+            });
+        }
+
+        function avisarCambiosDeConexion(clientes) {
+            const ahora = new Map(clientes.map((c) => [c.code_hash, c.name]));
+            if (conectadosAntes) {
+                const entraron = [...ahora].filter(([h]) => !conectadosAntes.has(h));
+                const salieron = [...conectadosAntes].filter(([h]) => !ahora.has(h));
+                const log = document.getElementById('logContainer');
+                for (const [, nombre] of entraron) log.innerHTML += `<div style="color: #4ade80;">[${new Date().toLocaleTimeString()}] 🟢 Se conectó: ${escapeHtml(nombre)}</div>`;
+                for (const [, nombre] of salieron) log.innerHTML += `<div style="color: #fbbf24;">[${new Date().toLocaleTimeString()}] 🔴 Se desconectó: ${escapeHtml(nombre)}</div>`;
+                if (entraron.length) tocarTonos([660, 880]);
+                else if (salieron.length) tocarTonos([660, 440]);
+            }
+            conectadosAntes = ahora;
         }
 
         async function actualizarDatos() {
@@ -908,8 +1136,11 @@
                 let clientesNecesarios = Math.ceil(data.projected_monthly_cost / 30);
                 document.getElementById('breakEven').innerText = `${clientesNecesarios} Cliente(s)`;
 
+                const todos = [...(data.clients || []), ...(data.deepgram_clients || [])];
                 renderClientes(data.clients || []);
-                clientesConectados = new Set((data.clients || []).map((c) => c.code_hash));
+                renderDeepgram(data.deepgram_clients || []);
+                clientesConectados = new Set(todos.map((c) => c.code_hash));
+                avisarCambiosDeConexion(todos);
                 renderCodigos(data.codes || []);
                 // El uso histórico cambia despacio: se pide como mucho una vez por minuto.
                 if (Date.now() - ultimoUso > 60000) actualizarUso();
@@ -919,7 +1150,7 @@
                 document.getElementById('serverStatus').innerText = "Conectado";
                 document.getElementById('serverStatus').className = "text-sm font-semibold text-green-400";
                 
-                logContainer.innerHTML += `<div>[${new Date().toLocaleTimeString()}] Sincronizado OK — Usuarios activos: ${data.active_users}${data.clients?.length ? ' (' + escapeHtml(data.clients.map((c) => c.name).join(', ')) + ')' : ''}</div>`;
+                logContainer.innerHTML += `<div>[${new Date().toLocaleTimeString()}] Sincronizado OK — Usuarios activos: ${data.active_users}${todos.length ? ' (' + escapeHtml(todos.map((c) => c.name).join(', ')) + ')' : ''}</div>`;
                 logContainer.scrollTop = logContainer.scrollHeight;
 
             } catch (err) {

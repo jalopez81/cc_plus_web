@@ -1,0 +1,16 @@
+name = "lcp-control"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+workers_dev = false  # solo el subdominio propio, sin URL *.workers.dev
+
+# Queda en tu dominio de Cloudflare. Cambia el nombre si prefieres otro subdominio.
+routes = [{ pattern = "control.life-caption-plus.bid", custom_domain = true }]
+
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+# Durable Objects con SQLite: los únicos disponibles en el plan gratis.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]

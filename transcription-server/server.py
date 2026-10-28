@@ -1,4 +1,9 @@
-# cd /workspace && bash starth.bh
+"""
+export CLOUDFLARE_TUNNEL_TOKEN='eyJhIjoiZTY0M2FiZWMwZGVlZTk0MTdhOGRhZTc2YzY1N2IwMzYiLCJ0IjoiMTExNGI5ZDYtMTU4YS00YmY4LThlMjMtYmMxMjJhOWZjM2QxIiwicyI6IlpHVXhaVEE0TUdJdFpqRTFNUzAwWm1GaUxUbGhaV1F0WVRrNU5tVmhaalJsWkRRdyJ9'
+export PUBLIC_HOSTNAME=whisper.life-caption-plus.bid 
+export WHISPER_MODEL="large-v3-turbo" 
+bash start-vast.sh
+"""
 # server.py — Servidor optimizado puramente para transcripción en tiempo real (Faster-Whisper)
 import os, re, sys, asyncio, inspect, json, hashlib, secrets, time, itertools, argparse, bisect, collections, unicodedata
 from datetime import datetime, timezone, timedelta
@@ -525,6 +530,14 @@ print(f"Cargando modelo Whisper '{WHISPER_MODEL}' en la GPU...")
 model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
 print("¡Whisper cargado correctamente!")
 
+# Los modelos large-v3 (y sobre todo turbo, con solo 4 capas de decodificador) se desvían con prompts largos
+# y van sobrados de velocidad, así que usan otro ajuste. El resto (small, medium...) conserva el original.
+# BEAM_SIZE y STYLE_PROMPT=0/1 lo fuerzan para comparar sin tocar el código.
+IS_V3_MODEL  = "large-v3" in WHISPER_MODEL
+BEAM_SIZE    = int(os.environ.get("BEAM_SIZE", "5" if IS_V3_MODEL else "3"))
+STYLE_PROMPT = os.environ.get("STYLE_PROMPT", "0" if IS_V3_MODEL else "1") != "0"
+print(f"Ajustes de decodificación: beam_size={BEAM_SIZE}, prompt de estilo={'sí' if STYLE_PROMPT else 'no'}")
+
 # ---- Parámetros de segmentación y estilos ----
 SAMPLE_RATE    = 16000
 RMS_THRESHOLD  = 0.012
@@ -607,26 +620,51 @@ def keep_segment(audio, seg) -> bool:
               f"logprob={seg.avg_logprob:.2f})")
     return keep
 
+# Palabras dudosas: Whisper da una probabilidad por palabra y la app subraya las que quedan por debajo de
+# LOW_CONFIDENCE. Pedir esas probabilidades añade un paso corto de alineación en la GPU; WORD_CONFIDENCE=0 lo apaga.
+WORD_CONFIDENCE = os.environ.get("WORD_CONFIDENCE", "1") != "0"
+LOW_CONFIDENCE  = 0.5
+
+def uncertain_tokens(text: str, words) -> list[int]:
+    """Posiciones (en text.split()) de las palabras con probabilidad baja. collapse_repeats puede haber quitado
+    palabras, así que se alinea por contenido, avanzando en orden, en vez de asumir que coinciden una a una."""
+    out, j = [], 0
+    for i, token in enumerate(text.split()):
+        key = normalize_text(token)
+        if not key:
+            continue
+        for k in range(j, min(j + 8, len(words))):
+            if normalize_text(words[k].word) == key:
+                if words[k].probability < LOW_CONFIDENCE:
+                    out.append(i)
+                j = k + 1
+                break
+    return out
+
 def run_transcribe(audio, lang, prev_text, prev_lang):
-    """Transcribe forzando `lang`. Devuelve (texto, avg_logprob ponderado por duración)."""
+    """Transcribe forzando `lang`. Devuelve (texto, avg_logprob ponderado por duración, palabras dudosas)."""
     context = prev_text[-150:] if (prev_text and lang == prev_lang and any(c in prev_text for c in ",.?!¿")) else ""
-    prompt = (STYLE_PROMPTS.get(lang, "") + " " + context).strip()
+    style = STYLE_PROMPTS.get(lang, "") if STYLE_PROMPT else ""
+    prompt = (style + " " + context).strip() or None
     segments, _ = model.transcribe(
         audio,
         language=lang,
-        beam_size=3,
+        beam_size=BEAM_SIZE,
         vad_filter=True,
         vad_parameters=dict(min_silence_duration_ms=500),
         condition_on_previous_text=False,
         initial_prompt=prompt,
+        word_timestamps=WORD_CONFIDENCE,
     )
     # transcribe() es perezoso: el trabajo de GPU ocurre al recorrer los segmentos.
     segs = [s for s in segments if keep_segment(audio, s)]
     if not segs:
-        return "", float("-inf")
+        return "", float("-inf"), []
     weights = [max(s.end - s.start, 0.01) for s in segs]
     score = sum(s.avg_logprob * w for s, w in zip(segs, weights)) / sum(weights)
-    return collapse_repeats("".join(s.text for s in segs).strip()), score
+    text = collapse_repeats("".join(s.text for s in segs).strip())
+    words = [w for s in segs for w in (s.words or [])]
+    return text, score, uncertain_tokens(text, words)
 
 def transcribe_sync(audio, prev_text="", prev_lang=None):
     t_start = time.perf_counter()
@@ -642,19 +680,19 @@ def transcribe_sync(audio, prev_text="", prev_lang=None):
     # 2. Transcripción en el idioma original
     confident = shares[lang] >= LANG_CONFIDENT
     if confident:
-        transcript_text, _ = run_transcribe(audio, lang, prev_text, prev_lang)
+        transcript_text, _, uncertain = run_transcribe(audio, lang, prev_text, prev_lang)
     else:
         results = {c: run_transcribe(audio, c, prev_text, prev_lang) for c in ALLOWED_LANGS}
         lang = max(ALLOWED_LANGS, key=lambda c: results[c][1])
-        transcript_text = results[lang][0]
+        transcript_text, _, uncertain = results[lang]
         print(f"[IDIOMA] dudoso (es={shares['es']:.2f} en={shares['en']:.2f}) → logprob "
               f"es={results['es'][1]:.2f} en={results['en'][1]:.2f}, anterior={prev_lang} → {lang}")
 
     timings = {"start": t_start, "detect_s": t_detected - t_start, "proc_s": time.perf_counter() - t_start}
-    return transcript_text, lang, confident, timings
+    return transcript_text, lang, confident, uncertain, timings
 
-@app.websocket("/ws/transcribe")
-async def websocket_endpoint(websocket: WebSocket):
+async def accept_with_code(websocket: WebSocket) -> tuple[str, dict] | None:
+    """Acepta el socket y valida el código; si no vale, avisa, cierra y devuelve None."""
     # El cliente envía el código como subprotocolo: new WebSocket(url, ['token', código])
     offered = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
     code = offered[1] if len(offered) >= 2 and offered[0] == "token" else ""
@@ -667,12 +705,13 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f">>> Conexión rechazada: código {motivo} ({info['name'] if info else '?'}) <<<")
         await websocket.send_json({"error": f"Código de acceso {motivo}."})
         await websocket.close(code=4401)
-        return
+        return None
+    return code_hash, info
 
-    client_id = next(client_ids)
+def new_client(websocket: WebSocket, client_id: int, code_hash: str, info: dict) -> dict:
     forwarded = websocket.headers.get("x-forwarded-for", "")
     now = time.time()
-    client = clients[client_id] = {
+    return {
         "id": client_id,
         "name": info["name"],
         "code_hash": code_hash[:12],
@@ -682,15 +721,27 @@ async def websocket_endpoint(websocket: WebSocket):
         "connected_at": now,
         "code_hash_full": code_hash,
         "last_activity": now,
-        "segments": 0,
-        "audio_s": 0.0,
     }
+
+@app.websocket("/ws/transcribe")
+async def websocket_endpoint(websocket: WebSocket):
+    auth = await accept_with_code(websocket)
+    if not auth:
+        return
+    code_hash, info = auth
+    client_id = next(client_ids)
+    client = clients[client_id] = {**new_client(websocket, client_id, code_hash, info), "segments": 0, "audio_s": 0.0}
     print(f">>> Cliente #{client_id} conectado: {info['name']} ({client['ip']}) <<<")
     # Se registra antes de esperar el cierre de la anterior, para que dos conexiones simultáneas no se cuelen.
     previous = active_by_code.get(code_hash)
     active_by_code[code_hash] = (client_id, websocket)
     if previous:
         await replace_previous(*previous)
+    # La app saluda al usuario por su nombre ("Welcome …!") y muestra el tiempo ya usado con este código;
+    # los clientes viejos ignoran este mensaje.
+    used_s = sum(x["end"] - x["start"] for x in load_sessions() if x["code_hash"] == code_hash)
+    # "flush" avisa de que el servidor acepta {"flush": true}; las apps viejas solo envían audio binario.
+    await websocket.send_json({"ok": True, "name": info["name"], "used_s": max(0, round(used_s)), "flush": True})
     loop = asyncio.get_running_loop()
 
     pcm = bytearray()
@@ -702,8 +753,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            data = await websocket.receive_bytes()
-            if len(data) < 2:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                raise WebSocketDisconnect(message.get("code", 1000))
+            data = message.get("bytes")
+            # Botón "SEND" de la app: transcribir ya lo que haya en el búfer, sin esperar pausa ni límite.
+            manual = False
+            if data is None:
+                try:
+                    manual = json.loads(message.get("text") or "{}").get("flush") is True
+                except (ValueError, AttributeError):
+                    pass
+                if not manual:
+                    continue
+                data = b""
+            elif len(data) < 2:
                 continue
 
             pcm.extend(data)
@@ -727,7 +791,7 @@ async def websocket_endpoint(websocket: WebSocket):
             buf_s = len(pcm) / 2 / SAMPLE_RATE
             pausa = silence_s >= SILENCE_CUT_S and buf_s >= MIN_SEGMENT_S
             demasiado_largo = buf_s >= MAX_SEGMENT_S
-            if not (pausa or demasiado_largo):
+            if not (pausa or demasiado_largo or manual):
                 continue
 
             usable = len(pcm) - (len(pcm) % 2)
@@ -744,7 +808,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.close(code=4401)
                 break
 
-            motivo = "pausa" if pausa else "límite máx."
+            motivo = "pausa" if pausa else "límite máx." if demasiado_largo else "manual"
             client["audio_s"] += len(audio) / SAMPLE_RATE
             print(f"[AUDIO] {len(audio)/SAMPLE_RATE:.1f} s ({motivo})")
 
@@ -752,7 +816,7 @@ async def websocket_endpoint(websocket: WebSocket):
             metrics.in_flight += 1
             concurrency = metrics.in_flight  # segmentos compitiendo por la GPU, incluido este
             try:
-                text, lang, confident, timings = await loop.run_in_executor(
+                text, lang, confident, uncertain, timings = await loop.run_in_executor(
                     None, transcribe_sync, audio, prev_text, prev_lang
                 )
             except Exception as e:
@@ -786,6 +850,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "transcript": text,
                 "language": lang,
                 "confident": confident,
+                "uncertain": uncertain,  # índices de palabras (text.split()) que Whisper no tiene claras
             })
 
     except WebSocketDisconnect:

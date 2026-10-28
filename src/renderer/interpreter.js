@@ -519,6 +519,17 @@ for (const button of elements.spellingLanguageButtons) {
 }
 
 elements.spellingInput.addEventListener('input', renderSpelling);
+$('clearSpelling').addEventListener('click', () => {
+  const input = elements.spellingInput;
+  input.value = '';
+  renderSpelling();
+  input.focus();
+  // Restart the glow even on repeated clicks, so it's obvious where to type next.
+  input.classList.remove('focus-flash');
+  void input.offsetWidth;
+  input.classList.add('focus-flash');
+});
+elements.spellingInput.addEventListener('animationend', () => elements.spellingInput.classList.remove('focus-flash'));
 $('copySpelling').addEventListener('click', () => {
   if (elements.spellingInput.value.trim()) copyText(spellingText(), 'Deletreo copiado');
 });
@@ -556,7 +567,7 @@ elements.interpreterId.addEventListener('input', () => {
 elements.notes.addEventListener('input', updateNotes);
 $('copyNotes').addEventListener('click', () => copyText(elements.notes.value, 'Notas copiadas'));
 $('clearNotes').addEventListener('click', () => {
-  if (!elements.notes.value || window.confirm('¿Limpiar todas las notas de esta llamada?')) {
+  if (!elements.notes.value ) {
     elements.notes.value = '';
     updateNotes();
     showToast('Notas limpiadas');

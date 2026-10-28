@@ -238,7 +238,7 @@ select {
 #settingsBtn {
   font-size: 15px;
   line-height: 1;
-  padding: 2px 9px;
+  padding: 9px 9px;  
 }
 
 #collapseBtn {
@@ -1166,7 +1166,7 @@ body {
   width: 100%;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 10px 12px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1257,8 +1257,9 @@ body {
   flex: 1 1 auto;
 }
 
-.engine-input-label.access-code-label {
-  flex: 0 0 112px;
+/* Whole rows can be hidden (the Deepgram rows, until Deepgram is enabled). */
+.engine-row[hidden] {
+  display: none;
 }
 
 .settings .settings-actions {
@@ -1284,8 +1285,9 @@ body {
 #callNotes {
   flex: 1;
   min-width: 0;
-  min-height: 28px;
-  max-height: 34px;
+  min-height: 56px; /* three lines; drag the corner for more */
+  max-height: 220px;
+  resize: vertical;
   padding: 5px 8px;
   border: 1px solid #28324a;
   border-radius: 5px;
@@ -1430,8 +1432,10 @@ body {
   color: #e8ecf6;
 }
 
+/* Three columns with equal sides, so Send sits in the true center whatever each group holds. */
 .bottom-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   flex: none;
   align-items: center;
   gap: 5px;
@@ -1455,8 +1459,19 @@ body {
   color: #cdd6e6;
 }
 
-.toolbar-spacer {
-  flex: 1;
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.toolbar-group-end {
+  justify-content: flex-end;
+}
+
+.bottom-toolbar [hidden] {
+  display: none;
 }
 
 .background-picker {
@@ -1633,15 +1648,15 @@ body {
   line-height: 1;
 }
 
-.window-controls button:nth-child(1) {
+.window-controls #winClose {
   background: #ff5f57;
 }
 
-.window-controls button:nth-child(2) {
+.window-controls #winMinimize {
   background: #febc2e;
 }
 
-.window-controls button:nth-child(3) {
+.window-controls #winCollapse {
   background: #28c840;
 }
 
@@ -1649,19 +1664,19 @@ body {
   filter: brightness(1.1);
 }
 
-.window-controls:hover button:nth-child(1)::after {
+.window-controls:hover #winClose::after {
   content: '×';
 }
 
-.window-controls:hover button:nth-child(2)::after {
+.window-controls:hover #winMinimize::after {
   content: '−';
 }
 
-.window-controls:hover button:nth-child(3)::after {
+.window-controls:hover #winCollapse::after {
   content: '▴';
 }
 
-.window-controls:hover button[aria-pressed='true']::after {
+.window-controls:hover #winCollapse[aria-pressed='true']::after {
   content: '▾';
 }
 
@@ -1706,7 +1721,7 @@ body {
   display: none;
 }
 
-/* Headset mic indicator: red when the mic delivers digital silence (hardware mute). */
+/* Mic toggle: red while the system's default microphone is muted. */
 .mic-indicator {
   display: flex;
   flex: none;
@@ -1742,9 +1757,8 @@ body {
   color: #2ec4b6;
 }
 
-.mic-indicator[data-state='on'].speaking {
-  background: rgba(46, 196, 182, 0.18);
-  box-shadow: 0 0 7px rgba(46, 196, 182, 0.55);
+.mic-indicator:disabled {
+  opacity: 0.6;
 }
 
 .mic-indicator[data-state='off'] {
@@ -1835,7 +1849,7 @@ body {
 .cap .src .text,
 .cap .tr {
   min-height: 0;
-  transition: min-height 0.3s ease;
+  transition: min-height 0.7s cubic-bezier(0.33, 1, 0.68, 1);
 }
 
 .cap.active .src .text,
@@ -1874,7 +1888,7 @@ body:not(.translator-off):not(.hide-translation) .cap.active .tr:empty {
   color: #fff;
 }
 
-.cap:not(.active) .split-btn {
+.cap:not(.active) .split-row {
   display: none;
 }
 
@@ -1943,8 +1957,8 @@ body:not(.translator-off):not(.hide-translation) .cap.active .tr:empty {
    The spread shadow is the dim layer: it isn't hit-testable, so clicking outside still closes it. */
 .soundbyte-popover {
   inset: 0;
-  width: calc(100% - 56px);
-  max-width: 420px;
+  width: calc(100% - 32px);
+  max-width: 460px;
   height: min(72%, 560px);
   margin: auto;
   border-color: rgba(18, 160, 160, 0.55);
@@ -2000,7 +2014,7 @@ body:not(.translator-off):not(.hide-translation) .cap.active .tr:empty {
   max-width: none;
 }
 
-/* DeepL key help */
+/* Help panels: access code (WhatsApp), DeepL and Gemini keys */
 .help-btn {
   flex: none;
   width: 24px;
@@ -2244,4 +2258,855 @@ body:not(.translator-off):not(.hide-translation) .cap.active .tr:empty {
 .cap .summary.error {
   border-left-color: #ff9f0a;
   color: #ff9f0a;
+}
+
+/* Access-code help: WhatsApp QR beside the contact instructions. */
+.help-panel[hidden] {
+  display: none;
+}
+
+.contact-help {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.contact-help p + p {
+  margin-top: 4px;
+}
+
+.contact-qr {
+  flex: none;
+  width: 108px;
+  height: auto;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.contact-help .link-btn {
+  font-weight: 700;
+  text-underline-offset: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Eye button inside key fields: shows or hides the typed code/key. */
+.has-reveal {
+  position: relative;
+}
+
+.settings .has-reveal input {
+  padding-right: 28px;
+}
+
+.reveal-btn {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #6d7b96;
+  transform: translateY(-50%);
+}
+
+.reveal-btn:hover,
+.reveal-btn[aria-pressed='true'] {
+  background: transparent;
+  color: #e8ecf6;
+}
+
+.reveal-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.spelling-intro {
+  flex: none;
+  margin: -4px 0 10px;
+  color: #a8b5cd;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* Spelling header: title on top, the small label underneath. */
+.spelling-title h2 {
+  margin: 0;
+  letter-spacing: 0.04em;
+}
+
+.spelling-title .tool-label {
+  display: block;
+  margin-top: 3px;
+}
+
+.spelling-clear {
+  flex: none;
+  align-self: flex-start;
+  min-height: 34px;
+  padding: 4px 10px;
+  border-color: #4c3a6e;
+  border-radius: 7px;
+  background: #2e2444;
+  color: #a8b5cd;
+  font-size: 11px;
+}
+
+.spelling-clear:hover {
+  border-color: #12a0a0;
+  color: #e8ecf6;
+}
+
+/* After Limpiar: a teal glow pulses around the input to show the cursor is there. */
+#spellingInput.focus-flash {
+  animation: spelling-focus-flash 900ms ease-out;
+}
+
+@keyframes spelling-focus-flash {
+  0% {
+    border-color: #2ec4b6;
+    box-shadow: 0 0 0 0 rgba(46, 196, 182, 0.75);
+  }
+  40% {
+    border-color: #2ec4b6;
+    box-shadow: 0 0 0 6px rgba(46, 196, 182, 0.35);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(46, 196, 182, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #spellingInput.focus-flash {
+    animation: none;
+    border-color: #2ec4b6;
+  }
+}
+
+.spelling-popover .popover-footer {
+  justify-content: center;
+}
+
+.spelling-popover #copySpelling {
+  padding: 8px 22px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Empty caption area: "press Start" while idle, a breathing "Listening…" once capture is on. */
+.placeholder:not(.listening) .placeholder-listening,
+.placeholder.listening .placeholder-idle {
+  display: none;
+}
+
+.placeholder-listening {
+  display: inline-block;
+  color: #8fd8cf;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  animation: placeholder-breathe 3s ease-in-out infinite;
+}
+
+@keyframes placeholder-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.97);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .placeholder-listening {
+    animation: none;
+  }
+}
+
+/* Words Whisper wasn't sure about: amber dotted underline and a faint amber tint, like a "check this" mark.
+   Amber rather than gray, because gray reads as "less important" and these are the words to verify. */
+.cap .uncertain {
+  color: color-mix(in srgb, currentColor 70%, #ffb84d);
+  text-decoration: underline dotted #ffb84d;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.2em;
+  text-decoration-skip-ink: none;
+}
+
+
+
+/* Header: brand + menus on the left, Start + status in the middle, window buttons on the right. */
+.toolbar-row.header-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.app-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.app-name {
+  overflow: hidden;
+  color: #e8ecf6;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-version {
+  flex: none;
+  align-self: flex-end;
+  margin-bottom: 1px;
+  color: #6d7b96;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+/* Menus line up under the app name, past the icon. */
+.brand-block .app-menu {
+  margin-left: 18px;
+}
+
+.header-center {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-grid .window-controls {
+  justify-self: end;
+  align-self: start;
+}
+
+/* macOS draws native traffic lights at the top left: keep the brand clear of them, hide the custom buttons. */
+.platform-darwin .header-grid .window-controls {
+  display: none;
+}
+
+.platform-darwin .brand-block {
+  padding-left: 62px;
+}
+
+/* Notes row: copy/clear stacked, then the transcription and mic indicators stacked on the right. */
+.call-tools .notes-actions {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 4px;
+  max-width: none;
+}
+
+.call-indicators {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.call-indicators .speak-indicator,
+.call-indicators .mic-indicator {
+  justify-content: center;
+  min-width: 66px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.call-indicators svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------- Guided tour ---------- */
+
+/* "Ver tutorial" sits under "Presiona Iniciar…" whenever capture is off. */
+.tour-btn {
+  display: block;
+  margin: 12px auto 0;
+  padding: 7px 16px;
+  border: 1px solid rgba(255, 77, 77, 0.6);
+  border-radius: 999px;
+  background: rgba(255, 77, 77, 0.14);
+  color: #ff8a8a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+
+.tour-btn:hover {
+  border-color: #ff4d4d;
+  background: rgba(255, 77, 77, 0.26);
+  color: #fff;
+}
+
+/* Catches stray clicks during the tour; transparent so the app stays fully visible. */
+.tour-blocker {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+}
+
+/* The pointer element only moves; its ::before is the red dot and ::after the click ripple. */
+.tour-pointer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1002;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  transition: transform 600ms cubic-bezier(0.45, 0, 0.2, 1);
+}
+
+.tour-pointer::before,
+.tour-pointer::after {
+  content: '';
+  position: absolute;
+  top: -11px;
+  left: -11px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+
+.tour-pointer::before {
+  border: 2px solid #fff;
+  background: #ff3b3b;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.55), 0 0 0 4px rgba(255, 59, 59, 0.25);
+}
+
+.tour-pointer.clicking::before {
+  animation: tour-press 320ms ease-out;
+}
+
+.tour-pointer.clicking::after {
+  border: 3px solid #ff3b3b;
+  animation: tour-ripple 520ms ease-out forwards;
+}
+
+@keyframes tour-press {
+  40% {
+    transform: scale(0.72);
+  }
+}
+
+@keyframes tour-ripple {
+  from {
+    opacity: 0.9;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+.tour-highlight {
+  outline: 2px solid #ff4d4d !important;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px rgba(255, 77, 77, 0.18) !important;
+  border-radius: 6px;
+}
+
+.tour-card {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1001;
+  padding: 11px 13px 12px;
+  border: 1px solid rgba(255, 77, 77, 0.55);
+  border-radius: 10px;
+  background: #131a29;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
+  color: #c3ccdd;
+  font-size: 12px;
+  line-height: 1.5;
+  transition: transform 250ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.tour-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tour-step {
+  color: #ff8a8a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.tour-exit {
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  color: #6d7b96;
+  font-size: 11px;
+}
+
+.tour-exit:hover {
+  background: transparent;
+  color: #e8ecf6;
+}
+
+.tour-title {
+  margin: 4px 0 4px;
+  color: #fff;
+  font-size: 14px;
+}
+
+.tour-body {
+  margin: 0;
+}
+
+.tour-body code {
+  color: #2ec4b6;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.tour-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.tour-next {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: #ff4d4d;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tour-next:hover {
+  background: #ff6b6b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-pointer,
+  .tour-card {
+    transition: none;
+  }
+
+  .tour-pointer.clicking::before,
+  .tour-pointer.clicking::after {
+    animation: none;
+  }
+}
+
+/* Engines actions: Copiar todo next to Done, both on the right. */
+.settings .settings-actions {
+  gap: 6px;
+}
+
+.settings .settings-actions #copyConfigBtn {
+  border: 1px solid #3d4b6b;
+  border-radius: 6px;
+  background: #1f293e;
+  color: #c3ccdd;
+}
+
+.settings .settings-actions #copyConfigBtn:hover {
+  border-color: #12a0a0;
+  background: #242f47;
+  color: #fff;
+}
+
+/* Engine rows share three columns (label/select · field · "?"), so every field ends at the same x
+   and the help buttons line up even in rows that have no "?" (the URL row). */
+.settings .engine-row:not([hidden]) {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 24px;
+  column-gap: 7px;
+  align-items: center;
+}
+
+.settings .engine-row > .engine-input-label {
+  grid-column: 2;
+}
+
+.settings .engine-row > .help-btn {
+  grid-column: 3;
+}
+
+/* Fields that are only sometimes shown (DeepL key, MyMemory email) never push the "?" out of its column. */
+.settings .engine-row:not([hidden]) {
+  grid-auto-flow: row dense;
+}
+
+.help-panel p + p {
+  margin-top: 4px;
+}
+
+.help-options {
+  margin: 6px 0 8px;
+  padding-left: 16px;
+}
+
+.help-options li + li {
+  margin-top: 2px;
+}
+
+.help-subtitle {
+  display: block;
+  color: #e8ecf6;
+}
+
+/* Short feature overview under "Ver tutorial" while idle. */
+.feature-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  justify-content: center;
+  gap: 4px 18px;
+  margin: 16px auto 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+  font-size: 11.5px;
+  color: #8592ab;
+}
+
+.feature-list li::before {
+  content: '•';
+  margin-right: 6px;
+  color: #ff6b6b;
+}
+
+@media (max-width: 380px) {
+  .feature-list {
+    grid-template-columns: max-content;
+  }
+}
+
+.whatsapp-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+/* Only shown under npm start, so the dev build isn't mistaken for the installed app. */
+.dev-badge {
+  flex: none;
+  align-self: flex-end;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f59e0b;
+  color: #1a1203;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.dev-badge[hidden] {
+  display: none;
+}
+
+/* Top right of the header: "Welcome <name>!" then the window buttons. It truncates instead of running into Start. */
+.header-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+  align-self: start;
+}
+
+.welcome {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #5eead4;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.welcome[hidden] {
+  display: none;
+}
+
+/* Time used with the access code, at the right of the ENGINES bar. */
+.usage {
+  flex: none;
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.usage[hidden] {
+  display: none;
+}
+
+.usage:not([hidden]) + .cfg-chevron {
+  margin-left: 8px;
+}
+
+/* ---------- Marked message (⏱): 15 minutes count from the client's last message ---------- */
+
+.mark-btn {
+  padding: 1px 6px;
+  border: 1px solid #3d4b68;
+  border-radius: 4px;
+  background: #1f293e;
+  color: #a8b5cd;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-shadow: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.cap:hover .mark-btn,
+.mark-btn:focus-visible,
+.cap.marked .mark-btn {
+  opacity: 1;
+}
+
+.mark-btn:hover {
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.cap.marked {
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+
+.cap.marked .mark-btn {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+}
+
+.hold-timer.marked {
+  cursor: pointer;
+  text-decoration: underline dotted #f59e0b;
+  text-underline-offset: 4px;
+}
+
+.hold-timer.marked.warning {
+  padding: 0 6px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.22);
+  color: #fbbf24;
+}
+
+.hold-timer.marked.expired {
+  padding: 0 6px;
+  border-radius: 6px;
+  background: #ff453a;
+  color: #fff;
+}
+
+/* Window-edge glow: three pulses at the 7-minute mark (amber) and at 15 minutes (red). */
+.overlay.hold-flash-7::after,
+.overlay.hold-flash-15::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  border-radius: inherit;
+  pointer-events: none;
+  animation: hold-flash 1.2s ease-in-out 3 both;
+}
+
+.overlay.hold-flash-7::after {
+  box-shadow: inset 0 0 0 3px #f59e0b, inset 0 0 40px rgba(245, 158, 11, 0.55);
+}
+
+.overlay.hold-flash-15::after {
+  box-shadow: inset 0 0 0 4px #ff453a, inset 0 0 60px rgba(255, 69, 58, 0.6);
+  animation-iteration-count: 5;
+}
+
+@keyframes hold-flash {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay.hold-flash-7::after,
+  .overlay.hold-flash-15::after {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* "Split here" sits at the foot of the live bubble only. */
+.cap.active .split-row:not([hidden]) {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+/* Ctrl/Cmd held: the hovered bubble is the one a click would remove. */
+body.ctrl-held .cap:hover {
+  outline: 2px solid #ff453a;
+  outline-offset: -2px;
+  cursor: pointer;
+}
+
+/* Red tag that slides in at the bubble's top-right corner while Ctrl is held over it. */
+.cap {
+  position: relative;
+}
+
+.cap::after {
+  content: 'Hacer click para eliminar';
+  position: absolute;
+  top: -10px;
+  right: 10px;
+  z-index: 5;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #ff453a;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-shadow: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(16px);
+  transition: opacity 0.18s ease, transform 0.22s ease;
+}
+
+body.ctrl-held .cap:hover::after {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cap::after {
+    transform: none;
+  }
+}
+
+/* Transcription engine: a segmented Whisper | Deepgram toggle built on radios. */
+.engine-toggle {
+  display: flex;
+  min-height: 29px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.engine-toggle label {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  color: #8b98b3;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.engine-toggle label + label {
+  border-left: 1px solid var(--border);
+}
+
+.engine-toggle label:hover {
+  background: var(--surface-hover);
+}
+
+.settings .engine-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.engine-toggle label:has(input:checked) {
+  background: rgba(46, 196, 182, 0.18);
+  color: #2ec4b6;
+}
+
+.engine-toggle label:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Send: cuts the current utterance short so it is transcribed without waiting for a pause. */
+.bottom-toolbar .flush-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: rgba(90, 200, 250, 0.45);
+  background: rgba(90, 200, 250, 0.12);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.bottom-toolbar .flush-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #06202c;
+}
+
+.bottom-toolbar .flush-btn:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: #5d6a85;
+  cursor: default;
+}
+
+.flush-btn svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }

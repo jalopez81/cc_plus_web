@@ -22,10 +22,11 @@ fi
 # Al relanzar el script no deben quedar dos túneles apuntando al mismo puerto.
 pkill -f "cloudflared tunnel" 2>/dev/null || true
 
+# --protocol http2: Vast suele bloquear el UDP que usa QUIC, y cloudflared pierde un buen rato antes de caer a HTTP/2.
 if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
   echo ">>> Arrancando túnel de Cloudflare con nombre..."
   # El token va por variable de entorno, no como argumento, para que no aparezca en `ps`.
-  TUNNEL_TOKEN="$CLOUDFLARE_TUNNEL_TOKEN" nohup cloudflared tunnel --no-autoupdate run > cloudflared.log 2>&1 &
+  TUNNEL_TOKEN="$CLOUDFLARE_TUNNEL_TOKEN" nohup cloudflared tunnel --no-autoupdate --protocol http2 run > cloudflared.log 2>&1 &
   if [ -n "$PUBLIC_HOSTNAME" ]; then
     export PUBLIC_URL="https://$PUBLIC_HOSTNAME"
   else
@@ -33,7 +34,7 @@ if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
   fi
 else
   echo ">>> Sin CLOUDFLARE_TUNNEL_TOKEN: usando quick tunnel (URL temporal)..."
-  nohup cloudflared tunnel --no-autoupdate --url http://localhost:8000 > cloudflared.log 2>&1 &
+  nohup cloudflared tunnel --no-autoupdate --protocol http2 --url http://localhost:8000 > cloudflared.log 2>&1 &
   for _ in $(seq 1 30); do
     PUBLIC_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' cloudflared.log | head -n 1 || true)
     [ -n "$PUBLIC_URL" ] && break

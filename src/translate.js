@@ -48,21 +48,39 @@ async function myMemory(text, from, to, settings) {
   return parts.join(' ');
 }
 
+// Free keys (":fx") go to api-free, paid ones to api. Newer plans (Developer/Growth) may not follow that
+// suffix, so a 403 from one host retries the other, and the host that worked is remembered per key.
+const deeplHostByKey = new Map();
+
 async function deepl(text, from, to, settings) {
   const key = settings.deeplKey;
-  const host = key.endsWith(':fx') ? 'api-free.deepl.com' : 'api.deepl.com';
-  const data = await request(`https://${host}/v2/translate`, {
-    method: 'POST',
-    headers: {
-      Authorization: `DeepL-Auth-Key ${key}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      text: [text],
-      source_lang: from.toUpperCase(),
-      target_lang: to === 'en' ? 'EN-US' : to.toUpperCase(),
-    }),
-  });
+  const guess = key.endsWith(':fx') ? 'api-free.deepl.com' : 'api.deepl.com';
+  const other = guess === 'api.deepl.com' ? 'api-free.deepl.com' : 'api.deepl.com';
+  const call = (host) =>
+    request(`https://${host}/v2/translate`, {
+      method: 'POST',
+      headers: {
+        Authorization: `DeepL-Auth-Key ${key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text: [text],
+        source_lang: from.toUpperCase(),
+        target_lang: to === 'en' ? 'EN-US' : to.toUpperCase(),
+      }),
+    });
+  const known = deeplHostByKey.get(key);
+  if (known) return (await call(known)).translations[0].text;
+  let host = guess;
+  let data;
+  try {
+    data = await call(host);
+  } catch (err) {
+    if (err.message !== 'HTTP 403') throw err;
+    host = other;
+    data = await call(host); // still 403 → the key itself is wrong
+  }
+  deeplHostByKey.set(key, host);
   return data.translations[0].text;
 }
 

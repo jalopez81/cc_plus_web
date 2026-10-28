@@ -1,6 +1,7 @@
 const {
   app,
   BrowserWindow,
+  clipboard,
   desktopCapturer,
   globalShortcut,
   ipcMain,
@@ -9,7 +10,6 @@ const {
   screen,
   session,
   shell,
-  systemPreferences,
 } = require('electron');
 // Windows installer: Setup.exe runs the app with --squirrel-* flags to create/remove shortcuts; quit right after.
 if (require('electron-squirrel-startup')) app.quit();
@@ -18,18 +18,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { translate } = require('./translate');
 const { paraphrase } = require('./paraphrase');
+const { getMicMuted, toggleMicMute, disposeMicMute } = require('./mic-mute');
 
-const SECRET_KEYS = ['deeplKey', 'deepgramKey', 'accessCode', 'geminiKey', 'groqKey'];
+const SECRET_KEYS = ['deeplKey', 'deepgramKey', 'accessCode', 'geminiKey'];
+const DEFAULT_TRANSCRIPTION_URL = 'wss://whisper.life-caption-plus.bid/ws/transcribe';
+// Control server (Cloudflare Worker in control-server/): checks access codes for Deepgram users.
+const CONTROL_URL = process.env.CC_PLUS_CONTROL_URL || 'wss://control.life-caption-plus.bid/ws/session';
 const DEFAULT_SETTINGS = {
   transcriptionEngine: 'whisper',
-  transcriptionUrl: process.env.CC_PLUS_TRANSCRIPTION_URL || '',
+  transcriptionUrl: process.env.CC_PLUS_TRANSCRIPTION_URL || DEFAULT_TRANSCRIPTION_URL,
   accessCode: process.env.CC_PLUS_ACCESS_CODE || '',
   deepgramKey: '',
   translator: 'off',
   deeplKey: '',
   myMemoryEmail: '',
   geminiKey: '',
-  groqKey: '',
   fontSize: 26,
   bgColor: '#1c2740',
   showTranscription: true,
@@ -47,7 +50,7 @@ const ZOOM_MAX = 1.6;
 const ZOOM_STEP = 0.1;
 
 // Only these hosts may be opened in the system browser from the renderer.
-const EXTERNAL_HOSTS = new Set(['www.deepl.com', 'deepl.com']);
+const EXTERNAL_HOSTS = new Set(['www.deepl.com', 'deepl.com', 'aistudio.google.com', 'chat.whatsapp.com']);
 
 const MIN_WIDTH = 420;
 const MIN_HEIGHT = 360;
@@ -87,6 +90,10 @@ function loadSettings() {
   }
   delete stored.showOriginal;
   delete stored.sourceMode;
+  delete stored.groqKey; // Groq was dropped as a paraphrase provider
+  delete stored.groqKeyEncrypted;
+  // A blank URL (never set up) falls back to the default server instead of leaving the app unusable.
+  if (!stored.transcriptionUrl) delete stored.transcriptionUrl;
   return { ...DEFAULT_SETTINGS, ...stored };
 }
 
@@ -288,6 +295,7 @@ function setCollapsed(collapsed, contentHeight) {
 // ---------- in-app menus ----------
 
 const sendMenuAction = (action) => win?.webContents.send('menu:action', action);
+const FLUSH_SHORTCUT = 'CommandOrControl+Shift+Space';
 
 function buildMenu(name) {
   const settings = loadSettings();
@@ -296,6 +304,12 @@ function buildMenu(name) {
     file: [
       { label: 'Start / Stop capture', click: () => sendMenuAction('toggle-capture') },
       { label: 'Mute / Unmute transcription', click: () => sendMenuAction('toggle-mute') },
+      {
+        label: 'Send pending audio now',
+        accelerator: FLUSH_SHORTCUT,
+        registerAccelerator: false,
+        click: () => sendMenuAction('flush-audio'),
+      },
       { label: 'New call', click: () => sendMenuAction('new-call') },
       { label: 'Clear captions', click: () => sendMenuAction('clear-captions') },
       { label: 'Copy transcript', click: () => sendMenuAction('copy-transcript') },
@@ -318,6 +332,7 @@ function buildMenu(name) {
     ],
     view: [
       { label: 'Engine settings', click: () => sendMenuAction('toggle-settings') },
+      { label: 'Tutorial', click: () => sendMenuAction('start-tour') },
       { label: collapsed ? 'Expand window' : 'Collapse window', click: () => sendMenuAction('toggle-collapse') },
       { type: 'separator' },
       {
@@ -387,6 +402,11 @@ function registerDisplayMediaHandler() {
 
 function registerIpc() {
   ipcMain.handle('settings:get', () => loadSettings());
+  ipcMain.handle('app:version', () => app.getVersion());
+  ipcMain.handle('app:is-dev', () => !app.isPackaged);
+  ipcMain.handle('app:control-url', () => CONTROL_URL);
+  // The renderer may only use media permissions, so copying the configuration goes through here.
+  ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text)));
   ipcMain.handle('settings:set', (_e, patch) => {
     const next = { ...loadSettings(), ...patch };
     saveSettings(next);
@@ -397,9 +417,8 @@ function registerIpc() {
   ipcMain.handle('capture:set-mode', (_e, mode) => {
     captureMode = mode === 'screen' ? 'screen' : 'window';
   });
-  ipcMain.handle('mic:request-access', () =>
-    process.platform === 'darwin' ? systemPreferences.askForMediaAccess('microphone') : true
-  );
+  ipcMain.handle('mic:get-muted', () => getMicMuted());
+  ipcMain.handle('mic:toggle-mute', () => toggleMicMute());
   ipcMain.on('window:close', () => app.quit());
   ipcMain.on('window:minimize', () => win?.minimize());
   ipcMain.on('app:open-external', (_e, url) => {
@@ -427,7 +446,7 @@ app.whenReady().then(() => {
     app.dock.setIcon(path.join(__dirname, '..', 'assets', 'icon.png'));
   }
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => {
-    // Display capture arrives with no media types; the headset monitor asks for audio only, never video.
+    // Display capture arrives with no media types; anything else may ask for audio only, never video.
     cb(permission === 'media' && (details.mediaTypes ?? []).every((type) => type === 'audio'));
   });
   registerDisplayMediaHandler();
@@ -438,7 +457,14 @@ app.whenReady().then(() => {
     if (!win) return;
     win.isVisible() ? win.hide() : win.showInactive();
   });
+  // Global so it works while the call app has focus; register() returns false if another app owns the combo.
+  if (!globalShortcut.register(FLUSH_SHORTCUT, () => sendMenuAction('flush-audio'))) {
+    console.warn(`Could not register ${FLUSH_SHORTCUT}: already in use by another app`);
+  }
 });
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  disposeMicMute();
+});
 app.on('window-all-closed', () => app.quit());

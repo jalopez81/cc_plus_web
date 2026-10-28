@@ -13,31 +13,34 @@
   <body>
     <div class="overlay" id="overlay">
       <header class="toolbar">
-        <div class="toolbar-row titlebar">
-          <div class="brand-mark window-controls">
-            <button type="button" id="winClose" title="Close" aria-label="Close"></button>
-            <button type="button" id="winMinimize" title="Minimize" aria-label="Minimize"></button>
-            <button type="button" id="winCollapse" title="Collapse" aria-label="Collapse" aria-pressed="false"></button>
+        <div class="toolbar-row header-grid">
+          <div class="brand-block">
+            <div class="app-brand">
+              <img class="app-icon" src="../../assets/icon.svg" alt="" />
+              <span class="app-name">Live Caption Plus</span>
+              <span class="app-version" id="appVersion"></span>
+              <span class="dev-badge" id="devBadge" title="Ejecutando desde npm start (no es el instalador)" hidden>DEV</span>
+            </div>
+            <nav class="app-menu" aria-label="Application menu">
+              <button type="button" data-menu="file">File</button>
+              <button type="button" data-menu="edit">Edit</button>
+              <button type="button" data-menu="view">View</button>
+            </nav>
           </div>
-          <nav class="app-menu" aria-label="Application menu">
-            <button type="button" data-menu="file">File</button>
-            <button type="button" data-menu="edit">Edit</button>
-            <button type="button" data-menu="view">View</button>
-          </nav>
-          <div class="status">
+          <div class="header-center">
+            <div class="controls">
+              <button id="toggleBtn" class="primary start" data-state="idle" title="Capture system audio">Start</button>
+            </div>
             <span class="dot" id="statusDot" role="status" aria-label="Idle" title="Idle"></span>
             <span class="hold-timer" id="holdTimer" title="Hold time: resets on every new message">15:00</span>
-            <span class="mic-indicator" id="micIndicator" role="img" data-state="unknown" title="Headset mic" aria-label="Headset mic status">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" /><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5" /><path class="slash" d="M2.5 2.5l11 11" /></svg>
-              <span class="mic-label" id="micLabel">MIC</span>
-            </span>
-            <button type="button" class="speak-indicator" id="speakIndicator" title="Transcription on: click to mute" aria-label="Mute transcription" aria-pressed="false">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6h2.5l3.5-3v10l-3.5-3H2.5z" /><path class="waves" d="M11 5.5a3.5 3.5 0 0 1 0 5M12.8 3.8a6 6 0 0 1 0 8.4" /><path class="cross" d="M11 6l3.5 4M14.5 6L11 10" /></svg>
-              <span id="speakLabel">ON</span>
-            </button>
           </div>
-          <div class="controls">
-            <button id="toggleBtn" class="primary start" data-state="idle" title="Capture system audio">Start</button>
+          <div class="header-right">
+            <span class="welcome" id="welcome" hidden></span>
+            <div class="brand-mark window-controls">
+              <button type="button" id="winCollapse" title="Collapse" aria-label="Collapse" aria-pressed="false"></button>
+              <button type="button" id="winMinimize" title="Minimize" aria-label="Minimize"></button>
+              <button type="button" id="winClose" title="Close" aria-label="Close"></button>
+            </div>
           </div>
         </div>
       </header>
@@ -47,30 +50,63 @@
         <button class="cfgbar" id="settingsBtn" type="button" aria-expanded="false" aria-controls="settingsContent">
           <span class="cfg-label">ENGINES</span>
           <span class="cfg-summary" id="settingsSummary">Whisper · Off</span>
+          <span class="usage" id="usage" title="Tiempo total conectado con tu código de acceso" hidden></span>
           <span class="cfg-chevron" aria-hidden="true">▾</span>
         </button>
         <div class="settings-content" id="settingsContent" aria-hidden="true">
           <form id="settingsForm" novalidate inert>
+            <div class="engine-row" id="engineToggleRow" hidden>
+              <span class="engine-select-label engine-row-label">Transcription</span>
+              <div class="engine-toggle engine-input-label" role="radiogroup" aria-label="Transcription engine">
+                <label><input type="radio" name="transcriptionEngine" value="whisper" checked /><span>Whisper</span></label>
+                <label><input type="radio" name="transcriptionEngine" value="deepgram" /><span>Deepgram</span></label>
+              </div>
+            </div>
             <div class="engine-row">
-              <label class="engine-select-label">
-                <span class="sr-only">Transcription engine</span>
-                <select name="transcriptionEngine" aria-label="Transcription engine">
-                  <option value="whisper">Whisper</option>
-                  <option value="deepgram" id="deepgramOption" hidden disabled>Deepgram</option>
-                </select>
-              </label>
-              <label class="engine-input-label" data-engine-for="whisper">
+              <span class="engine-select-label engine-row-label">Server URL</span>
+              <label class="engine-input-label">
                 <span class="sr-only">Transcription WebSocket URL</span>
                 <input type="url" name="transcriptionUrl" autocomplete="off" placeholder="wss://.../ws/transcribe" />
               </label>
-              <label class="engine-input-label access-code-label" data-engine-for="whisper">
-                <span class="sr-only">Access code</span>
-                <input type="password" name="accessCode" autocomplete="off" placeholder="Access code" />
-              </label>
-              <label class="engine-input-label" data-engine-for="deepgram">
+              <button type="button" class="help-btn" aria-expanded="false" aria-controls="urlHelp" title="Qué es la URL del servidor">?</button>
+            </div>
+            <div class="engine-row" id="deepgramKeyRow" hidden>
+              <span class="engine-select-label engine-row-label">Deepgram key</span>
+              <label class="engine-input-label">
                 <span class="sr-only">Deepgram API key</span>
                 <input type="password" name="deepgramKey" autocomplete="off" placeholder="Deepgram API key" />
               </label>
+            </div>
+            <div class="help-panel" id="urlHelp" hidden>
+              <div class="help-panel-header">
+                <strong>URL del servidor</strong>
+                <button type="button" class="popover-close" data-close-help aria-label="Cerrar ayuda">✕</button>
+              </div>
+              <p>Es la dirección del servidor que convierte el audio en texto. La app ya viene con la correcta:</p>
+              <p><code>wss://whisper.life-caption-plus.bid/ws/transcribe</code></p>
+              <p>Solo cámbiala si te indican otro servidor. Si la borraste por error, copia la de arriba, pégala aquí y pulsa <b>Done</b>. Siempre empieza por <code>wss://</code>.</p>
+            </div>
+            <div class="engine-row">
+              <span class="engine-select-label engine-row-label">Access code</span>
+              <label class="engine-input-label">
+                <span class="sr-only">Access code</span>
+                <input type="password" name="accessCode" autocomplete="off" placeholder="Access code" />
+              </label>
+              <button type="button" class="help-btn" aria-expanded="false" aria-controls="accessHelp" title="Cómo conseguir tu código de acceso">?</button>
+            </div>
+            <div class="help-panel" id="accessHelp" hidden>
+              <div class="help-panel-header">
+                <strong>Código de acceso</strong>
+                <button type="button" class="popover-close" data-close-help aria-label="Cerrar ayuda">✕</button>
+              </div>
+              <div class="contact-help">
+                <img class="contact-qr" src="images/whatsapp-qr.png" alt="Código QR del grupo de WhatsApp LCP_LIVE_CAPTION_PLUS" />
+                <div>
+                  <p>Para obtener o renovar tu código, escríbeme en el grupo de WhatsApp:</p>
+                  <p><button type="button" class="link-btn" data-href="https://chat.whatsapp.com/JV2b2YByKKf2qzCJjdtEmg"><svg class="whatsapp-icon" viewBox="0 0 32 32" aria-hidden="true"><path fill="#25D366" d="M16 3a13 13 0 0 0-11.2 19.6L3 29l6.6-1.7A13 13 0 1 0 16 3z"/><path fill="#fff" d="M11.6 9.5c-.3-.6-.6-.6-.9-.6h-.8c-.3 0-.7.1-1 .5s-1.4 1.3-1.4 3.2 1.4 3.7 1.6 4 2.7 4.3 6.7 5.9c3.3 1.3 4 1 4.7 1s2.3-.9 2.6-1.9.3-1.7.2-1.9-.4-.3-.8-.5-2.3-1.1-2.6-1.3-.6-.2-.9.2-1 1.3-1.2 1.5-.4.3-.8.1a10.5 10.5 0 0 1-5.2-4.6c-.4-.7.4-.6 1.1-2 .1-.2.1-.5 0-.7l-1.3-2.9z"/></svg>LCP_LIVE_CAPTION_PLUS</button></p>
+                  <p>Escanea el código QR con tu teléfono o pulsa el enlace. Cuando recibas el código, pégalo en el campo <b>Access code</b> y pulsa <b>Done</b>.</p>
+                </div>
+              </div>
             </div>
             <div class="engine-row">
               <label class="engine-select-label">
@@ -88,11 +124,33 @@
                 <span class="sr-only">DeepL API key</span>
                 <input type="password" name="deeplKey" autocomplete="off" placeholder="DeepL API key" />
               </label>
-              <button type="button" class="help-btn" id="deeplHelpBtn" data-for="deepl" aria-expanded="false" aria-controls="deeplHelp" title="Cómo conseguir una API key gratis de DeepL">?</button>
               <label class="engine-input-label" data-for="mymemory auto">
                 <span class="sr-only">MyMemory email (optional)</span>
                 <input type="email" name="myMemoryEmail" autocomplete="off" placeholder="MyMemory email (optional)" />
               </label>
+              <button type="button" class="help-btn" id="deeplHelpBtn" aria-expanded="false" aria-controls="deeplHelp" title="Opciones de traducción">?</button>
+            </div>
+            <div class="help-panel" id="deeplHelp" hidden>
+              <div class="help-panel-header">
+                <strong>Traducción</strong>
+                <button type="button" class="popover-close" data-close-help aria-label="Cerrar ayuda">✕</button>
+              </div>
+              <ul class="help-options">
+                <li><b>Auto</b>: usa DeepL si tienes key; si no, Google, MyMemory y Apertium, el primero que responda.</li>
+                <li><b>DeepL</b>: la mejor calidad. Necesita una key; el plan gratis trae 1.000.000 de caracteres en total, una sola vez (pasos abajo).</li>
+                <li><b>Google</b>: gratis y sin key. Puede limitarse si se usa mucho.</li>
+                <li><b>MyMemory</b>: gratis, unos 5.000 caracteres al día; 50.000 si pones tu email.</li>
+                <li><b>Apertium</b>: gratis, pero de menor calidad. Último recurso.</li>
+                <li><b>Off</b>: solo transcripción, sin traducir.</li>
+              </ul>
+              <strong class="help-subtitle">API key gratis de DeepL</strong>
+              <ol>
+                <li>Abre <button type="button" class="link-btn" data-href="https://www.deepl.com/pro-api">deepl.com/pro-api</button> y elige el plan gratis <b>DeepL API Developer</b>.</li>
+                <li>Crea tu cuenta. DeepL puede pedir una tarjeta para verificar tu identidad; el plan gratis no cobra.</li>
+                <li>En tu cuenta, abre la pestaña <b>API Keys</b> y copia la clave.</li>
+                <li>Elige <b>DeepL</b> en la lista, pega la clave en su campo y pulsa <b>Done</b>.</li>
+              </ol>
+              <p>El plan gratis incluye 1.000.000 de caracteres en total: no se renueva cada mes. Cuando se acaba, usa <b>Auto</b> (MyMemory con tu email y Google) o pasa a un plan de pago de DeepL.</p>
             </div>
             <div class="engine-row">
               <span class="engine-select-label engine-row-label">Paraphrase</span>
@@ -100,23 +158,20 @@
                 <span class="sr-only">Gemini API key</span>
                 <input type="password" name="geminiKey" autocomplete="off" placeholder="Gemini API key" />
               </label>
-              <label class="engine-input-label">
-                <span class="sr-only">Groq API key</span>
-                <input type="password" name="groqKey" autocomplete="off" placeholder="Groq API key" />
-              </label>
+              <button type="button" class="help-btn" aria-expanded="false" aria-controls="geminiHelp" title="Cómo conseguir una API key gratis de Gemini">?</button>
             </div>
-            <div class="help-panel" id="deeplHelp" hidden>
+            <div class="help-panel" id="geminiHelp" hidden>
               <div class="help-panel-header">
-                <strong>API key gratis de DeepL</strong>
-                <button type="button" class="popover-close" id="closeDeeplHelp" aria-label="Cerrar ayuda">✕</button>
+                <strong>API key gratis de Gemini</strong>
+                <button type="button" class="popover-close" data-close-help aria-label="Cerrar ayuda">✕</button>
               </div>
               <ol>
-                <li>Abre <button type="button" class="link-btn" data-href="https://www.deepl.com/pro-api">deepl.com/pro-api</button> y elige el plan <b>DeepL API Free</b>.</li>
-                <li>Crea tu cuenta. DeepL pide una tarjeta solo para verificar tu identidad; el plan Free no cobra.</li>
-                <li>En tu cuenta, abre la pestaña <b>API Keys</b> y copia la clave (termina en <code>:fx</code>).</li>
+                <li>Abre <button type="button" class="link-btn" data-href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</button> e inicia sesión con tu cuenta de Google.</li>
+                <li>Acepta los términos si te los pide y pulsa <b>Create API key</b>.</li>
+                <li>Copia la clave (empieza por <code>AIza</code>).</li>
                 <li>Pégala en este campo y pulsa <b>Done</b>.</li>
               </ol>
-              <p>El plan gratis incluye 500.000 caracteres al mes.</p>
+              <p>Es gratis y no pide tarjeta. El plan gratis tiene un límite de solicitudes por minuto y por día, de sobra para usar Paraphrase durante las llamadas.</p>
             </div>
             <fieldset class="advanced-panel" id="advancedPanel" hidden>
               <legend>Configuración avanzada</legend>
@@ -126,6 +181,7 @@
               </label>
             </fieldset>
             <div class="settings-actions">
+              <button type="button" id="copyConfigBtn" title="Copia la URL, el código y las keys para usarlos en otra computadora o instalación">Copiar todo</button>
               <button type="submit" class="primary">Done</button>
             </div>
           </form>
@@ -134,7 +190,7 @@
 
       <section class="call-tools" aria-label="Notas de la llamada">
         <label class="sr-only" for="callNotes">Notas rápidas</label>
-        <textarea id="callNotes" rows="1" spellcheck="true" placeholder="Notas rápidas de la llamada…"></textarea>
+        <textarea id="callNotes" rows="3" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="Notas rápidas de la llamada…"></textarea>
         <div class="notes-actions">
           <button type="button" class="icon-btn" id="copyNotes" title="Copiar notas" aria-label="Copiar notas">
             <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" /></svg>
@@ -143,20 +199,43 @@
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6.5 4.5V3a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1.5M4 4.5l.6 8.1a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.1" /></svg>
           </button>
         </div>
+        <div class="call-indicators">
+          <button type="button" class="speak-indicator" id="speakIndicator" title="Transcription on: click to mute" aria-label="Mute transcription" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 6h2.5l3.5-3v10l-3.5-3H2.5z" /><path class="waves" d="M11 5.5a3.5 3.5 0 0 1 0 5M12.8 3.8a6 6 0 0 1 0 8.4" /><path class="cross" d="M11 6l3.5 4M14.5 6L11 10" /></svg>
+            <span id="speakLabel">ON</span>
+          </button>          <button type="button" class="mic-indicator" id="micIndicator" data-state="unknown" title="Microphone: click to mute" aria-label="Mute microphone" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5" /><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5" /><path class="slash" d="M2.5 2.5l11 11" /></svg>
+            <span class="mic-label" id="micLabel">MIC</span>
+          </button>
+        </div>
         <span class="sr-only" id="notesSaveStatus" role="status">Guardado automáticamente</span>
       </section>
 
       <main class="captions" id="captions">
-        <p class="placeholder" id="placeholder">
-          Presiona <strong>Iniciar</strong> para transcribir el audio del sistema.
-        </p>
+        <div class="placeholder" id="placeholder">
+          <span class="placeholder-idle">
+            Presiona <strong>Iniciar</strong> para transcribir el audio del sistema.
+            <button type="button" class="tour-btn" id="tourBtn">▶ Ver tutorial</button>
+            <ul class="feature-list" aria-label="Funciones">
+              <li>Subtítulos en vivo EN ⇄ ES</li>
+              <li>Traducción automática</li>
+              <li>Palabras dudosas subrayadas</li>
+              <li>Paraphrase con IA</li>
+              <li>Frases rápidas para la llamada</li>
+              <li>Deletreo fonético (ABC)</li>
+              <li>Notas y temporizador de espera</li>
+              <li>Ventana flotante y compacta</li>
+            </ul>
+          </span>
+          <span class="placeholder-listening">Listening…</span>
+        </div>
       </main>
 
       <nav class="interpreter-tools" aria-label="Herramientas de interpretación">
         <button type="button" data-category="Saludos y cierres">Saludos</button>
-        <button type="button" id="spellingButton" title="Deletreo" aria-label="Deletreo">ABC</button>
         <button type="button" data-category="Intervenciones y espera">Intervenciones</button>
         <button type="button" data-category="Solicitudes y cierres">Solicitudes</button>
+        <button type="button" id="spellingButton" title="Deletreo" aria-label="Deletreo">ABC</button>
       </nav>
 
       <section class="tool-popover soundbyte-popover" id="soundbytePopup" hidden aria-label="Frases rápidas">
@@ -188,17 +267,23 @@
 
       <section class="tool-popover soundbyte-popover spelling-popover" id="spellingPopup" hidden aria-label="Deletreo">
         <header class="popover-header">
-          <div>
+          <div class="spelling-title">
+            <h2>DELETREO</h2>
             <span class="tool-label">ALFABETO FONÉTICO</span>
-            <h2>Deletreo</h2>
           </div>
           <button type="button" class="popover-close" data-close-popover aria-label="Cerrar">✕</button>
         </header>
+        <p class="spelling-intro">
+          Para deletrear nombres, correos o direcciones sin confusiones: escribe el texto y lee cada letra con su
+          palabra («B de Boy», «M de Mary»). Así no se confunden letras que suenan parecido, como B/V o M/N.
+          Elige EN o ES según el idioma de quien escucha.
+        </p>
         <div class="spelling-controls">
           <label class="soundbyte-search">
             <span class="sr-only">Texto a deletrear</span>
             <input id="spellingInput" type="text" autocomplete="off" spellcheck="false" placeholder="Escribe un nombre, dirección…" />
           </label>
+          <button type="button" class="spelling-clear" id="clearSpelling" title="Borrar el texto y escribir otro">Limpiar</button>
           <div class="spelling-language" role="group" aria-label="Idioma de las palabras">
             <button type="button" data-spelling-language="EN" aria-pressed="true">EN</button>
             <button type="button" data-spelling-language="ES" aria-pressed="false">ES</button>
@@ -253,36 +338,44 @@
       <div class="tool-toast" id="toolToast" role="status" aria-live="polite"></div>
 
       <footer class="bottom-toolbar" aria-label="Transcript controls">
-        <label class="background-picker" title="Choose background color" aria-label="Choose background color">
-          <input type="color" id="bgColorInput" />
-        </label>
-        <label class="visibility-toggle">
-          <input type="checkbox" id="showTranscriptionToggle" />
-          <span class="checkmark" aria-hidden="true"></span>
-          <span>Transcription</span>
-        </label>
-        <label class="visibility-toggle">
-          <input type="checkbox" id="showTranslationToggle" />
-          <span class="checkmark" aria-hidden="true"></span>
-          <span>Translation</span>
-        </label>
-        <label class="visibility-toggle" title="One sentence per line, or normal paragraphs">
-          <input type="checkbox" id="sentenceLinesToggle" />
-          <span class="checkmark" aria-hidden="true"></span>
-          <span>Lines</span>
-        </label>
-        <span class="toolbar-spacer"></span>
-        <button id="fontDownBtn" title="Smaller text" aria-label="Smaller text">−</button>
-        <output class="font-size-value" id="fontSizeValue" title="Text size" aria-live="polite">26</output>
-        <button id="fontUpBtn" title="Larger text" aria-label="Larger text">+</button>
-        <button id="newCallBtn" class="new-call-btn" title="Mark a new call in the log" aria-label="New call">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 2.5H3.6a1 1 0 0 0-1 1.1c.5 5.1 4.6 9.2 9.7 9.7a1 1 0 0 0 1.1-1v-1.6a1 1 0 0 0-.8-1l-1.9-.4a1 1 0 0 0-1 .3l-.6.7a7.6 7.6 0 0 1-3-3l.7-.6a1 1 0 0 0 .3-1l-.4-1.9a1 1 0 0 0-1-.8z" /><path d="M11.5 1.5v4M9.5 3.5h4" /></svg>
-          <span>New call</span>
+        <div class="toolbar-group">
+          <label class="background-picker" title="Choose background color" aria-label="Choose background color">
+            <input type="color" id="bgColorInput" />
+          </label>
+          <label class="visibility-toggle">
+            <input type="checkbox" id="showTranscriptionToggle" />
+            <span class="checkmark" aria-hidden="true"></span>
+            <span>Transcription</span>
+          </label>
+          <label class="visibility-toggle">
+            <input type="checkbox" id="showTranslationToggle" />
+            <span class="checkmark" aria-hidden="true"></span>
+            <span>Translation</span>
+          </label>
+          <label class="visibility-toggle" title="One sentence per line, or normal paragraphs">
+            <input type="checkbox" id="sentenceLinesToggle" />
+            <span class="checkmark" aria-hidden="true"></span>
+            <span>Lines</span>
+          </label>
+        </div>
+        <button type="button" id="flushBtn" class="flush-btn" title="Transcribir ya el audio pendiente, sin esperar una pausa (Ctrl+Shift+Espacio)" aria-label="Send pending audio now" disabled>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8h9M8.5 4.5L12 8l-3.5 3.5M13.5 3v10" /></svg>
+          <span>Send</span>
         </button>
-        <button id="clearBtn" class="clear-btn" title="Clear captions" aria-label="Clear captions">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M14 2 8.6 7.4" /><path d="M7.6 6.6l1.8 1.8" /><path d="M7.4 8.6c-1.5-.6-3.1.2-3.4 1.8-.2 1.2-.7 2-1.5 2.5 2 .7 4.6.3 5.5-1.3.5-.9.4-2-.6-3z" /></svg>
-          <span>Clear</span>
-        </button>
+        <div class="toolbar-group toolbar-group-end">
+          <button id="fontDownBtn" title="Smaller text" aria-label="Smaller text">−</button>
+          <output class="font-size-value" id="fontSizeValue" title="Text size" aria-live="polite">26</output>
+          <button id="fontUpBtn" title="Larger text" aria-label="Larger text">+</button>
+          <!-- Hidden from the bar; New call stays in the File menu. -->
+          <button id="newCallBtn" class="new-call-btn" title="Mark a new call in the log" aria-label="New call" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 2.5H3.6a1 1 0 0 0-1 1.1c.5 5.1 4.6 9.2 9.7 9.7a1 1 0 0 0 1.1-1v-1.6a1 1 0 0 0-.8-1l-1.9-.4a1 1 0 0 0-1 .3l-.6.7a7.6 7.6 0 0 1-3-3l.7-.6a1 1 0 0 0 .3-1l-.4-1.9a1 1 0 0 0-1-.8z" /><path d="M11.5 1.5v4M9.5 3.5h4" /></svg>
+            <span>New call</span>
+          </button>
+          <button id="clearBtn" class="clear-btn" title="Clear captions" aria-label="Clear captions">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M14 2 8.6 7.4" /><path d="M7.6 6.6l1.8 1.8" /><path d="M7.4 8.6c-1.5-.6-3.1.2-3.4 1.8-.2 1.2-.7 2-1.5 2.5 2 .7 4.6.3 5.5-1.3.5-.9.4-2-.6-3z" /></svg>
+            <span>Clear</span>
+          </button>
+        </div>
       </footer>
     </div>
     <script type="module" src="renderer.js"></script>

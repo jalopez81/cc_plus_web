@@ -1,10 +1,13 @@
+import { AccessSession } from './access.js';
 import { DeepgramStream } from './deepgram.js';
 import { WhisperStream } from './whisper.js';
 import { showToast } from './interpreter.js';
+import { endTour, startTour } from './tour.js';
 
 const MAX_BLOCKS = 200;
 const HOLD_TIME_MS = 15 * 60 * 1000;
 const HOLD_WARNING_MS = 2 * 60 * 1000;
+const MARK_WARNING_MS = 7 * 60 * 1000; // with a marked message, the first visual alert comes at the 7-minute mark
 const FONT_MIN = 16;
 const FONT_MAX = 48;
 const SPEAKER_LABELS = { en: 'Cliente · EN', es: 'LEP · ES' };
@@ -27,6 +30,75 @@ const sentenceLinesToggle = $('sentenceLinesToggle');
 document.body.classList.add(`platform-${window.captioner.platform}`);
 
 let settings = await window.captioner.getSettings();
+void window.captioner.getVersion().then((version) => {
+  $('appVersion').textContent = `v${version}`;
+});
+// npm start runs unpackaged; the badge tells it apart from the installed .exe.
+void window.captioner.isDev().then((dev) => {
+  $('devBadge').hidden = !dev;
+});
+// "Welcome <name>!" uses the name tied to the access code, sent by the server on connect.
+// The last one is remembered so the greeting is there on launch, before the first Start.
+const WELCOME_KEY = 'welcomeName';
+function showWelcome(name, { toast = false } = {}) {
+  const el = $('welcome');
+  el.textContent = name ? `Welcome ${name}!` : '';
+  el.title = el.textContent; // the header may truncate it in a narrow window
+  el.hidden = !name;
+  try {
+    if (name) localStorage.setItem(WELCOME_KEY, name);
+    else localStorage.removeItem(WELCOME_KEY);
+  } catch {}
+  if (name && toast) showToast(`👋 Welcome ${name}!`);
+}
+try {
+  showWelcome(localStorage.getItem(WELCOME_KEY) || '');
+} catch {}
+
+// Total time connected with the current access code. The server sends what was used before this
+// session (`used_s`); the app keeps adding while connected and remembers the total for the next launch.
+const USAGE_KEY = 'usedSeconds';
+let usage = { base: 0, since: null, timer: null };
+try {
+  usage.base = Number(localStorage.getItem(USAGE_KEY)) || 0;
+} catch {}
+
+function formatUsage(seconds) {
+  const totalMin = Math.floor(seconds / 60);
+  const h = Math.floor(totalMin / 60);
+  return h ? `${h} h ${totalMin % 60} min` : `${totalMin} min`;
+}
+
+function renderUsage() {
+  const el = $('usage');
+  const seconds = usage.base + (usage.since ? (Date.now() - usage.since) / 1000 : 0);
+  el.textContent = `⏱ ${formatUsage(seconds)} usados`;
+  el.hidden = $('welcome').hidden;
+}
+
+function startUsage(usedS) {
+  stopUsage();
+  usage = { base: usedS, since: Date.now(), timer: setInterval(renderUsage, 15000) };
+  renderUsage();
+}
+
+function stopUsage() {
+  clearInterval(usage.timer);
+  if (usage.since) usage.base += (Date.now() - usage.since) / 1000;
+  usage = { base: usage.base, since: null, timer: null };
+  try {
+    localStorage.setItem(USAGE_KEY, String(Math.round(usage.base)));
+  } catch {}
+  renderUsage();
+}
+
+// The server accepted the access code: greet its owner and start counting from their total.
+function onAccepted({ name = '', usedS = null } = {}) {
+  showWelcome(name, { toast: true });
+  if (usedS !== null) startUsage(usedS);
+}
+renderUsage();
+
 settings.transcriptionEngine ??= 'whisper';
 settings.deepgramKey ??= '';
 settings.accessCode ??= '';
@@ -98,6 +170,8 @@ let holdDeadline = null;
 let holdInterval = null;
 let holdAlarmPlayed = false;
 let alarmCtx = null;
+// The client's last message, pinned by the interpreter: { at, el, stage } — the 15 minutes count from `at`.
+let holdMark = null;
 
 function playHoldAlarm() {
   alarmCtx ??= new AudioContext();
@@ -117,7 +191,32 @@ function playHoldAlarm() {
   }
 }
 
+const formatClock = (date) =>
+  date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+
+// Edge glow over the whole window plus a toast, so the alert is seen even while reading captions.
+function flashHoldAlert(stage) {
+  overlay.classList.remove('hold-flash-7', 'hold-flash-15');
+  void overlay.offsetWidth; // restart the animation if the same class comes back
+  overlay.classList.add(`hold-flash-${stage}`);
+  showToast(stage === 7 ? '⏱ 7 minutos desde el mensaje marcado' : '⏱ 15 minutos: se acabó el tiempo de espera');
+}
+
 function renderHoldTimer() {
+  if (holdMark) {
+    const elapsed = Date.now() - holdMark.at;
+    const stage = elapsed >= HOLD_TIME_MS ? 15 : elapsed >= MARK_WARNING_MS ? 7 : 0;
+    if (stage > holdMark.stage) {
+      holdMark.stage = stage;
+      flashHoldAlert(stage);
+    }
+    const mins = Math.floor(elapsed / 60000);
+    const secs = String(Math.floor(elapsed / 1000) % 60).padStart(2, '0');
+    holdTimerEl.title = `Mensaje marcado: ${formatClock(new Date(holdMark.at))} · Ahora: ${formatClock(new Date())} · Pasaron ${mins}:${secs}. Clic para quitar la marca.`;
+  } else {
+    holdTimerEl.title = 'Hold time: resets on every new message. Mark a bubble with ⏱ to count from it.';
+  }
+  holdTimerEl.classList.toggle('marked', Boolean(holdMark));
   const remaining = holdDeadline === null ? HOLD_TIME_MS : Math.max(0, holdDeadline - Date.now());
   if (holdDeadline !== null && remaining === 0 && !holdAlarmPlayed) {
     holdAlarmPlayed = true;
@@ -128,19 +227,62 @@ function renderHoldTimer() {
   const seconds = String(totalSeconds % 60).padStart(2, '0');
   holdTimerEl.textContent = `${minutes}:${seconds}`;
   holdTimerEl.classList.toggle('paused', holdDeadline === null);
-  holdTimerEl.classList.toggle('warning', holdDeadline !== null && remaining > 0 && remaining <= HOLD_WARNING_MS);
+  const warnFrom = holdMark ? HOLD_TIME_MS - MARK_WARNING_MS : HOLD_WARNING_MS;
+  holdTimerEl.classList.toggle('warning', holdDeadline !== null && remaining > 0 && remaining <= warnFrom);
   holdTimerEl.classList.toggle('expired', holdDeadline !== null && remaining === 0);
 }
 
 function resetHoldTimer() {
-  holdDeadline = Date.now() + HOLD_TIME_MS;
-  holdAlarmPlayed = false;
+  if (holdMark) return; // the marked message keeps driving the count
+  startHoldCount(Date.now());
+}
+
+function startHoldCount(from) {
+  holdDeadline = from + HOLD_TIME_MS;
+  holdAlarmPlayed = Date.now() >= holdDeadline; // marking an old message shouldn't ring right away
   clearInterval(holdInterval);
   holdInterval = setInterval(renderHoldTimer, 250);
   renderHoldTimer();
 }
 
+// Time of the bubble's latest finished sentence: the moment the client stopped talking.
+function lastMessageTime(block) {
+  const last = block?.segments.at(-1);
+  return last ? last.time.getTime() : Date.now();
+}
+
+function unmarkBubble() {
+  holdMark.el.classList.remove('marked');
+  holdMark.el.querySelector('.mark-btn').textContent = '⏱';
+}
+
+// Clicking ⏱ on the marked bubble again (or on the header timer) removes the mark.
+function setHoldMark(el) {
+  if (holdMark) unmarkBubble();
+  if (!el || holdMark?.el === el) {
+    holdMark = null;
+    if (session) startHoldCount(Date.now());
+    else stopHoldTimer();
+    return;
+  }
+  const at = lastMessageTime(blocksByEl.get(el));
+  const elapsed = Date.now() - at;
+  // Stages already passed when marking don't flash again.
+  holdMark = { at, el, stage: elapsed >= HOLD_TIME_MS ? 15 : elapsed >= MARK_WARNING_MS ? 7 : 0 };
+  el.classList.add('marked');
+  el.querySelector('.mark-btn').textContent = `⏱ ${formatClock(new Date(at))}`;
+  startHoldCount(at);
+}
+
+holdTimerEl.addEventListener('click', () => {
+  if (holdMark) setHoldMark(null);
+});
+
 function stopHoldTimer() {
+  if (holdMark) {
+    unmarkBubble();
+    holdMark = null;
+  }
   holdDeadline = null;
   clearInterval(holdInterval);
   renderHoldTimer();
@@ -152,10 +294,6 @@ const METER_INTERVAL_MS = 100;
 // Peak amplitude of system audio that counts as speech, whether sent or withheld by mute.
 const SPEECH_LEVEL = 0.02;
 const SPEECH_HOLD_MS = 400;
-// Headsets muted in hardware deliver digital zeros; a live mic's noise floor sits above one 16-bit step.
-const MIC_SILENCE_LEVEL = 1e-5;
-const MIC_MUTE_AFTER_MS = 1200;
-const MIC_SPEAKING_LEVEL = 0.05;
 
 let meterCtx = null;
 
@@ -202,61 +340,45 @@ function setMuted(next) {
 
 const micIndicator = $('micIndicator');
 const micLabel = $('micLabel');
-let micStream = null;
-let micMeter = null;
-let micLastSound = 0;
-let micGeneration = 0;
 
-function stopMicMonitor() {
-  micGeneration += 1;
-  micMeter?.stop();
-  micStream?.getTracks().forEach((track) => track.stop());
-  micMeter = null;
-  micStream = null;
-  micIndicator.dataset.state = 'unknown';
-  micIndicator.classList.remove('speaking');
-  micLabel.textContent = 'MIC';
-  micIndicator.title = 'Headset mic';
+function renderMic(micMuted) {
+  micIndicator.dataset.state = micMuted ? 'off' : 'on';
+  micIndicator.setAttribute('aria-pressed', String(micMuted));
+  micIndicator.setAttribute('aria-label', micMuted ? 'Unmute microphone' : 'Mute microphone');
+  micIndicator.title = micMuted ? 'Microphone muted: click to unmute' : 'Microphone on: click to mute';
+  micLabel.textContent = micMuted ? 'OFF' : 'ON';
 }
 
-async function startMicMonitor() {
-  stopMicMonitor();
-  const generation = micGeneration;
+function renderMicError(err) {
+  micIndicator.dataset.state = 'unknown';
+  micLabel.textContent = 'MIC';
+  micIndicator.title = `Mic mute unavailable: ${err.message || err}`;
+}
+
+// The OS can change the mute (or the default mic) behind our back, so re-read it rather than tracking it.
+async function refreshMic() {
   try {
-    if (!(await window.captioner.requestMicAccess())) throw new Error('microphone access denied');
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    });
-    if (generation !== micGeneration) {
-      stream.getTracks().forEach((track) => track.stop());
-      return;
-    }
-    micStream = stream;
-    micMeter = createLevelMeter(stream);
-    micLastSound = Date.now();
-    const [track] = stream.getAudioTracks();
-    micIndicator.title = `Headset mic: ${track.label || 'default input'}`;
+    renderMic(await window.captioner.getMicMuted());
   } catch (err) {
-    if (generation !== micGeneration) return;
-    micIndicator.title = `Mic monitor unavailable: ${err.message || err.name}`;
+    renderMicError(err);
   }
 }
 
-function renderMic(now) {
-  const [track] = micStream.getAudioTracks();
-  const peak = micMeter.peak();
-  if (peak > MIC_SILENCE_LEVEL) micLastSound = now;
-  const off = track.muted || track.readyState === 'ended' || now - micLastSound > MIC_MUTE_AFTER_MS;
-  micIndicator.dataset.state = off ? 'off' : 'on';
-  micIndicator.classList.toggle('speaking', !off && peak > MIC_SPEAKING_LEVEL);
-  micLabel.textContent = off ? 'OFF' : 'ON';
+async function toggleMic() {
+  micIndicator.disabled = true;
+  try {
+    renderMic(await window.captioner.toggleMicMute());
+  } catch (err) {
+    renderMicError(err);
+  } finally {
+    micIndicator.disabled = false;
+  }
 }
 
 function pollMeters() {
   const now = Date.now();
   if (systemMeter && systemMeter.peak() > SPEECH_LEVEL) speechUntil = now + SPEECH_HOLD_MS;
   speakIndicator.classList.toggle('speaking', Boolean(systemMeter) && now < speechUntil);
-  if (micMeter) renderMic(now);
 }
 
 // ---------- captions ----------
@@ -270,8 +392,9 @@ function createBlock(lang) {
   el.className = 'cap interim active';
   el.dataset.lang = baseLang(lang);
   el.innerHTML =
-    '<div class="cap-meta"><span class="time"></span><button type="button" class="split-btn" hidden title="Continue this language in a new bubble">Split</button></div><div class="src"><img class="flag" alt="" /><span class="lang"></span><span class="text"></span></div><div class="tr"></div>' +
-    '<div class="paraphrase" hidden><button type="button" class="paraphrase-btn" title="Summarize this message (Gemini / Groq)">Paraphrase</button><div class="summary" hidden></div></div>';
+    '<div class="cap-meta"><span class="time"></span><button type="button" class="mark-btn" title="Marcar el último mensaje: los 15 minutos cuentan desde aquí">⏱</button></div><div class="src"><img class="flag" alt="" /><span class="lang"></span><span class="text"></span></div><div class="tr"></div>' +
+    '<div class="paraphrase" hidden><button type="button" class="paraphrase-btn" title="Condense this message with Gemini">Paraphrase</button><div class="summary" hidden></div></div>' +
+    '<div class="split-row" hidden><button type="button" class="split-btn" title="Lo próximo que se diga empieza en una burbuja nueva">✂ Split here</button></div>';
   el.querySelector('.time').textContent = formatTime(new Date());
   const flag = el.querySelector('.flag');
   const flagSrc = SPEAKER_FLAGS[baseLang(lang)];
@@ -312,10 +435,41 @@ function pairSegment(blockId, index, seg) {
   const base = `${blockId}:${index}`;
   const oneToOne = tr.length === 0 || src.length === tr.length;
   const pairOf = (j) => (oneToOne ? `${base}:${j}` : base);
+  // The server marks doubtful words by their position in the whole segment; re-base them per sentence.
+  const uncertain = new Set(seg.uncertain ?? []);
+  let offset = 0;
   return {
-    src: src.map((text, j) => ({ text, pair: pairOf(j) })),
+    src: src.map((text, j) => {
+      const count = text.split(/\s+/).filter(Boolean).length;
+      const local = new Set();
+      for (let i = 0; i < count; i += 1) if (uncertain.has(offset + i)) local.add(i);
+      offset += count;
+      return { text, pair: pairOf(j), uncertain: local };
+    }),
     tr: tr.map((text, j) => ({ text, pair: pairOf(j) })),
   };
+}
+
+// Words Whisper wasn't sure about get their own span, so the interpreter knows which ones to double-check.
+function appendMarkedWords(parent, text, uncertain) {
+  let index = 0;
+  for (const part of text.split(/(\s+)/)) {
+    if (!part) continue;
+    if (/^\s+$/.test(part)) {
+      parent.append(part);
+      continue;
+    }
+    if (uncertain.has(index)) {
+      const word = document.createElement('span');
+      word.className = 'uncertain';
+      word.title = 'Whisper no está seguro de esta palabra';
+      word.textContent = part;
+      parent.append(word);
+    } else {
+      parent.append(part);
+    }
+    index += 1;
+  }
 }
 
 function fillSentences(container, items) {
@@ -329,7 +483,8 @@ function fillSentences(container, items) {
     const span = document.createElement('span');
     span.className = 'sentence';
     span.dataset.pair = item.pair;
-    span.textContent = item.text;
+    if (item.uncertain?.size) appendMarkedWords(span, item.text, item.uncertain);
+    else span.textContent = item.text;
     span.classList.toggle('hovered', item.pair === hoveredPair);
     span.classList.toggle('selected', item.pair === selectedPair);
     nodes.push(span);
@@ -361,12 +516,10 @@ function renderBlock(block) {
   scrollToBottom();
 }
 
-// Same-language speech stays in one bubble, so offer a manual split once it gets too tall to follow.
-const SPLIT_THRESHOLD = 0.45; // fraction of the captions area's height
-
+// Same-language speech keeps growing one bubble; the live one offers "Split here" at its foot
+// so the next words start a new bubble.
 function updateSplitButton(block) {
-  const tooTall = block === currentBlock && block.el.offsetHeight > captionsEl.clientHeight * SPLIT_THRESHOLD;
-  block.el.querySelector('.split-btn').hidden = !tooTall;
+  block.el.querySelector('.split-row').hidden = block !== currentBlock || block.segments.length === 0;
 }
 
 // ---------- paraphrase ----------
@@ -391,8 +544,8 @@ async function paraphraseBlock(el) {
     const result = await window.captioner.paraphrase(text, lang);
     summary.classList.toggle('error', Boolean(result.error));
     summary.textContent =
-      result.error === 'Paraphrase API key is not set'
-        ? 'Add a Gemini or Groq API key in Engines to paraphrase.'
+      result.error === 'Gemini API key is not set'
+        ? 'Add your free Gemini API key in Engines to paraphrase (press ? next to the field for how).'
         : result.error || result.text;
   } catch (err) {
     summary.classList.add('error');
@@ -438,7 +591,32 @@ captionsEl.addEventListener('mouseleave', () => {
   hoveredPair = null;
 });
 
+// Ctrl+click (Cmd+click on macOS) removes a bubble, e.g. noise or a misheard fragment.
+function removeBubble(el) {
+  if (holdMark?.el === el) setHoldMark(null);
+  if (currentBlock?.el === el) currentBlock = null;
+  el.remove();
+  if (!captionsEl.querySelector('.cap')) placeholder.hidden = false;
+  showToast('Burbuja eliminada');
+}
+
+// While Ctrl/Cmd is held, the bubble under the pointer shows it would be removed.
+const setCtrlHeld = (held) => document.body.classList.toggle('ctrl-held', held);
+window.addEventListener('keydown', (e) => setCtrlHeld(e.ctrlKey || e.metaKey));
+window.addEventListener('keyup', (e) => setCtrlHeld(e.ctrlKey || e.metaKey));
+window.addEventListener('blur', () => setCtrlHeld(false));
+
 captionsEl.addEventListener('click', (e) => {
+  const bubble = e.target.closest('.cap');
+  if (bubble && (e.ctrlKey || e.metaKey)) {
+    removeBubble(bubble);
+    return;
+  }
+  const markBtn = e.target.closest('.mark-btn');
+  if (markBtn) {
+    setHoldMark(markBtn.closest('.cap'));
+    return;
+  }
   const splitBtn = e.target.closest('.split-btn');
   if (splitBtn) {
     splitBlock(splitBtn.closest('.cap'));
@@ -463,6 +641,22 @@ document.addEventListener('click', (e) => {
   markPair(selectedPair, 'selected', false);
   selectedPair = null;
 });
+
+// Tutorial bubbles: rendered like real ones, but never translated, logged or kept after the tour.
+function addDemoBlock(lang, segments) {
+  commitBlock();
+  const block = createBlock(lang);
+  block.el.classList.add('demo');
+  block.el.classList.remove('interim', 'active');
+  block.segments = segments.map((seg) => ({ ...seg, uncertain: seg.uncertain ?? [], time: new Date() }));
+  renderBlock(block);
+  return block.el;
+}
+
+function clearDemo() {
+  captionsEl.querySelectorAll('.cap.demo').forEach((el) => el.remove());
+  if (!captionsEl.querySelector('.cap')) placeholder.hidden = false;
+}
 
 function commitBlock() {
   if (!currentBlock) return;
@@ -523,7 +717,7 @@ async function translateSegment(block, seg) {
       if (message === 'DeepL API key is not set') {
         message = 'Add your DeepL API key in Settings to translate.';
       } else if (message.includes('HTTP 456')) {
-        message = 'DeepL monthly character quota exceeded (HTTP 456); check your account.';
+        message = 'DeepL character quota used up (HTTP 456); switch to Auto or check your DeepL plan.';
       } else if (message.includes('DeepL: HTTP 403')) {
         message = 'DeepL rejected the API key (HTTP 403); check it in Settings.';
       }
@@ -542,7 +736,7 @@ async function translateSegment(block, seg) {
   logSegment(block, seg);
 }
 
-function handleTranscript({ text, language, confident, translation }) {
+function handleTranscript({ text, language, confident, uncertain, translation }) {
   const transcript = String(text ?? '').trim();
   const translated = typeof translation === 'string' ? translation.trim() : '';
   if (!transcript) return;
@@ -558,6 +752,7 @@ function handleTranscript({ text, language, confident, translation }) {
     src: transcript,
     tr: translated || (settings.translator === 'off' ? '' : undefined),
     time: new Date(),
+    uncertain: uncertain ?? [],
   };
   currentBlock.segments.push(seg);
   renderBlock(currentBlock);
@@ -597,6 +792,7 @@ function handleUtteranceEnd() {
 }
 
 function clearCaptions() {
+  if (holdMark) setHoldMark(null);
   currentBlock = null;
   hoveredPair = null;
   selectedPair = null;
@@ -622,15 +818,27 @@ async function captureSystemAudio() {
 const TOGGLE_LABELS = { idle: 'Start', starting: 'Starting…', live: 'Stop' };
 
 // One place derives the Start/Stop button from capture state; CSS colors it per data-state.
+const flushBtn = $('flushBtn');
+
+// Cuts the current utterance short: the server transcribes what it has buffered without waiting for a pause.
+function flushAudio() {
+  if (!session) return;
+  if (!session.transcription.flush()) showToast('Este servidor no admite el envío manual');
+}
+
 function renderToggle() {
   const state = captureStarting ? 'starting' : session ? 'live' : 'idle';
   toggleBtn.dataset.state = state;
   toggleBtn.textContent = TOGGLE_LABELS[state];
   toggleBtn.disabled = captureStarting;
+  flushBtn.disabled = !session;
+  // Once Start is pressed, the empty caption area says it's listening instead of asking to press Start.
+  placeholder.classList.toggle('listening', state !== 'idle');
 }
 
 async function start() {
   if (session || captureStarting) return;
+  endTour(); // real captions shouldn't mix with the demo ones
   captureStarting = true;
   renderToggle();
 
@@ -670,10 +878,35 @@ async function start() {
       renderToggle();
       return;
     }
-    if (!/^[0-9a-f]+$/i.test(settings.accessCode)) {
-      openSettings();
-      form.accessCode.focus();
-      setStatus('error', 'Add your server access code in Engines settings.');
+  }
+  // Both engines need a code: Whisper checks it on the GPU server, Deepgram on the control server.
+  if (!/^[0-9a-f]+$/i.test(settings.accessCode)) {
+    openSettings();
+    setHelpOpen('accessHelp', true);
+    form.accessCode.focus();
+    setStatus('error', 'Add your access code in Engines. To get one, ask in the LCP_LIVE_CAPTION_PLUS WhatsApp group.');
+    captureStarting = false;
+    renderToggle();
+    return;
+  }
+
+  let access = null;
+  if (settings.transcriptionEngine === 'deepgram') {
+    setStatus('connecting', 'Checking access code…');
+    access = new AccessSession({
+      url: await window.captioner.getControlUrl(),
+      accessCode: settings.accessCode,
+      onLost: (message) => {
+        if (session?.access !== access) return;
+        stop({ keepStatus: true });
+        setStatus('error', message);
+      },
+    });
+    try {
+      onAccepted(await access.open());
+    } catch (err) {
+      access.close();
+      setStatus('error', err.message);
       captureStarting = false;
       renderToggle();
       return;
@@ -716,11 +949,12 @@ async function start() {
             accessCode: settings.accessCode,
             onTranscript: handleTranscript,
             onStatus,
+            onWelcome: onAccepted,
           });
 
     transcription.setMuted(muted);
     systemMeter = createLevelMeter(audioStream);
-    session = { stream, transcription };
+    session = { stream, transcription, access };
     audioTracks[0].addEventListener('ended', () => stop());
     await transcription.start(audioStream);
     if (session?.transcription !== transcription) return;
@@ -731,7 +965,10 @@ async function start() {
     overlay.classList.remove('idle');
   } catch (err) {
     if (session) stop({ keepStatus: true });
-    else stream?.getTracks().forEach((track) => track.stop());
+    else {
+      stream?.getTracks().forEach((track) => track.stop());
+      access?.close();
+    }
     systemMeter?.stop();
     systemMeter = null;
     setStatus('error', `Computer audio capture failed: ${err.message || err.name}`);
@@ -743,13 +980,15 @@ async function start() {
 
 function stop({ keepStatus = false } = {}) {
   if (!session) return;
-  const { stream, transcription } = session;
+  const { stream, transcription, access } = session;
   session = null;
   transcription.stop();
+  access?.close();
   stream.getTracks().forEach((t) => t.stop());
   systemMeter?.stop();
   systemMeter = null;
   stopHoldTimer();
+  stopUsage();
   commitBlock();
   logSession('ended');
   renderToggle();
@@ -769,39 +1008,52 @@ function syncTranslatorFields() {
   for (const el of form.querySelectorAll('[data-for]')) {
     el.hidden = !el.dataset.for.split(' ').includes(form.translator.value);
   }
-  for (const el of form.querySelectorAll('[data-engine-for]')) {
-    el.hidden = !el.dataset.engineFor.split(' ').includes(form.transcriptionEngine.value);
+  // A help panel whose "?" button just got hidden, itself or with its row (e.g. DeepL deselected), closes with it.
+  for (const button of form.querySelectorAll('.help-btn[aria-controls]')) {
+    if (button.closest('[hidden]')) setHelpOpen(button.getAttribute('aria-controls'), false);
   }
-  if (form.translator.value !== 'deepl') setDeeplHelpOpen(false);
 }
 
-// ---------- DeepL help ----------
+// ---------- help panels (access code, DeepL, Gemini) ----------
 
-function setDeeplHelpOpen(open) {
-  $('deeplHelp').hidden = !open;
-  $('deeplHelpBtn').setAttribute('aria-expanded', String(open));
+// One panel at a time, so the settings area doesn't grow into a wall of instructions.
+function setHelpOpen(id, open) {
+  for (const button of form.querySelectorAll('.help-btn[aria-controls]')) {
+    const panelId = button.getAttribute('aria-controls');
+    if (panelId !== id && !open) continue; // closing one panel leaves the others alone
+    const show = open && panelId === id;
+    $(panelId).hidden = !show;
+    button.setAttribute('aria-expanded', String(show));
+  }
 }
 
-$('deeplHelpBtn').addEventListener('click', () => setDeeplHelpOpen($('deeplHelp').hidden));
-$('closeDeeplHelp').addEventListener('click', () => setDeeplHelpOpen(false));
-$('deeplHelp').addEventListener('click', (e) => {
-  const link = e.target.closest('[data-href]');
-  if (link) window.captioner.openExternal(link.dataset.href);
-});
+for (const button of form.querySelectorAll('.help-btn[aria-controls]')) {
+  const id = button.getAttribute('aria-controls');
+  button.addEventListener('click', () => setHelpOpen(id, $(id).hidden));
+}
+for (const panel of form.querySelectorAll('.help-panel')) {
+  panel.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close-help]')) setHelpOpen(panel.id, false);
+    const link = e.target.closest('[data-href]');
+    if (link) window.captioner.openExternal(link.dataset.href);
+  });
+}
 
 // ---------- hidden advanced settings ----------
 
 // Typing this in the call notes reveals the advanced panel; typing it again hides it.
 const SECRET_CODE = '#lcp-config';
 const advancedPanel = $('advancedPanel');
-const deepgramOption = $('deepgramOption');
+const engineToggleRow = $('engineToggleRow');
+const deepgramKeyRow = $('deepgramKeyRow');
 const showDeepgramToggle = $('showDeepgramToggle');
 const notesInput = $('callNotes');
 
+// With Deepgram hidden, Whisper is the only engine, so there is nothing to toggle.
 function applyDeepgramVisibility() {
   const show = Boolean(settings.showDeepgram);
-  deepgramOption.hidden = !show;
-  deepgramOption.disabled = !show;
+  engineToggleRow.hidden = !show;
+  deepgramKeyRow.hidden = !show;
   showDeepgramToggle.checked = show;
 }
 
@@ -843,12 +1095,40 @@ function fillForm() {
   form.myMemoryEmail.value = settings.myMemoryEmail || '';
   form.deeplKey.value = settings.deeplKey || '';
   form.geminiKey.value = settings.geminiKey || '';
-  form.groqKey.value = settings.groqKey || '';
   syncTranslatorFields();
 }
 
 // Opening and closing only toggle visibility, so unsaved edits survive a collapse.
+// ---------- show/hide keys ----------
+
+const EYE_ICON =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8Z" /><circle cx="8" cy="8" r="2" /></svg>';
+const EYE_OFF_ICON =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8Z" /><circle cx="8" cy="8" r="2" /><path d="M2.5 13.5l11-11" /></svg>';
+
+function setRevealed(button, input, revealed) {
+  input.type = revealed ? 'text' : 'password';
+  button.innerHTML = revealed ? EYE_OFF_ICON : EYE_ICON;
+  button.setAttribute('aria-pressed', String(revealed));
+  button.title = revealed ? 'Ocultar' : 'Mostrar';
+  button.setAttribute('aria-label', revealed ? 'Ocultar' : 'Mostrar');
+}
+
+// Every key field (access code, DeepL, Deepgram, Gemini) gets an eye button inside it.
+const revealButtons = [...form.querySelectorAll('input[type="password"]')].map((input) => {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'reveal-btn';
+  setRevealed(button, input, false);
+  button.addEventListener('click', () => setRevealed(button, input, input.type === 'password'));
+  input.closest('label').classList.add('has-reveal');
+  input.after(button);
+  return { button, input };
+});
+
 function setSettingsOpen(open) {
+  // Closing the settings hides any key left visible.
+  if (!open) for (const { button, input } of revealButtons) setRevealed(button, input, false);
   form.inert = !open;
   settingsContent.classList.toggle('expanded', open);
   settingsContent.setAttribute('aria-hidden', String(!open));
@@ -867,10 +1147,16 @@ async function saveForm() {
   const values = readForm();
   const restartRequired =
     values.transcriptionEngine !== settings.transcriptionEngine ||
-    (values.transcriptionEngine === 'whisper' &&
-      (values.transcriptionUrl !== settings.transcriptionUrl || values.accessCode !== settings.accessCode)) ||
+    values.transcriptionUrl !== settings.transcriptionUrl ||
+    values.accessCode !== settings.accessCode ||
     (values.transcriptionEngine === 'deepgram' && values.deepgramKey !== settings.deepgramKey);
   const translatorChanged = values.translator !== settings.translator || values.deeplKey !== settings.deeplKey;
+  // A new code may belong to someone else: greet again only after the server names its owner.
+  if (values.accessCode !== settings.accessCode) {
+    showWelcome('');
+    usage.base = 0;
+    stopUsage();
+  }
   settings = await window.captioner.setSettings(values);
   if (translatorChanged) lastProvider = null;
   applyAppearance();
@@ -887,9 +1173,34 @@ function readForm() {
     myMemoryEmail: form.myMemoryEmail.value.trim(),
     deeplKey: form.deeplKey.value.trim(),
     geminiKey: form.geminiKey.value.trim(),
-    groqKey: form.groqKey.value.trim(),
   };
 }
+
+// ---------- copy the whole configuration ----------
+
+// Plain "Label: value" lines, so the copy is readable (and editable) wherever the user keeps it.
+const CONFIG_HEADER = 'Live Caption Plus · configuración';
+const CONFIG_FIELDS = [
+  ['transcriptionEngine', 'Engine'],
+  ['transcriptionUrl', 'Server URL'],
+  ['accessCode', 'Access code'],
+  ['deepgramKey', 'Deepgram key'],
+  ['translator', 'Translator'],
+  ['deeplKey', 'DeepL key'],
+  ['myMemoryEmail', 'MyMemory email'],
+  ['geminiKey', 'Gemini key'],
+];
+
+$('copyConfigBtn').addEventListener('click', async () => {
+  const values = readForm();
+  const lines = [CONFIG_HEADER, ...CONFIG_FIELDS.filter(([key]) => values[key]).map(([key, label]) => `${label}: ${values[key]}`)];
+  try {
+    await window.captioner.writeClipboard(lines.join('\n'));
+    showToast('Configuración copiada. Incluye tus claves: guárdala en un lugar privado.');
+  } catch (err) {
+    showToast(`No se pudo copiar: ${err.message || 'error'}`);
+  }
+});
 
 form.addEventListener('input', () => {
   syncTranslatorFields();
@@ -912,11 +1223,39 @@ form.addEventListener('submit', async (e) => {
 
 toggleBtn.addEventListener('click', () => (session ? stop() : start()));
 speakIndicator.addEventListener('click', () => setMuted(!muted));
-// A plugged or unplugged headset changes the default input, so follow it (this also retries a failed start).
-navigator.mediaDevices.addEventListener('devicechange', () => void startMicMonitor());
+flushBtn.addEventListener('click', flushAudio);
+micIndicator.addEventListener('click', () => void toggleMic());
+// A plugged or unplugged headset changes the default input, which has its own mute state.
+navigator.mediaDevices.addEventListener('devicechange', () => void refreshMic());
+window.addEventListener('focus', () => void refreshMic());
 $('clearBtn').addEventListener('click', clearCaptions);
 
 // Marks a call boundary in the log; the next speech starts a fresh bubble.
+// A random dark background (any hue, muted, low lightness) so each call looks visibly different
+// while light caption text stays readable; the hue always moves at least 60° from the current one.
+function randomDarkColor(current) {
+  const hueOf = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const max = Math.max(r, g, b);
+    const d = max - Math.min(r, g, b);
+    if (!d) return null;
+    const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return (h * 60 + 360) % 360;
+  };
+  const currentHue = /^#[0-9a-f]{6}$/i.test(current ?? '') ? hueOf(current) : null;
+  let hue;
+  do hue = Math.random() * 360;
+  while (currentHue !== null && Math.abs(((hue - currentHue + 540) % 360) - 180) < 60);
+  const s = 0.3 + Math.random() * 0.25;
+  const l = 0.12 + Math.random() * 0.08;
+  const f = (n) => {
+    const k = (n + hue / 30) % 12;
+    const value = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(value * 255).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
 async function newCall() {
   commitBlock();
   try {
@@ -927,6 +1266,10 @@ async function newCall() {
     showToast('No se pudo escribir en el registro');
     console.error('New call log failed:', err);
   }
+  // The previous call is already in the log, so the screen can start fresh.
+  clearCaptions();
+  settings = await window.captioner.setSettings({ bgColor: randomDarkColor(settings.bgColor) });
+  applyAppearance();
 }
 
 $('newCallBtn').addEventListener('click', newCall);
@@ -1036,9 +1379,25 @@ function toggleVisibility(checkbox) {
   void saveVisibilitySettings();
 }
 
+const runTour = () =>
+  startTour({
+    isLive: () => Boolean(session || captureStarting),
+    toast: showToast,
+    expand: async () => {
+      if (overlay.classList.contains('collapsed')) await toggleCollapse();
+    },
+    settingsOpen,
+    closeSettings,
+    addDemoBlock,
+    clearDemo,
+  });
+$('tourBtn').addEventListener('click', runTour);
+
 const MENU_ACTIONS = {
+  'start-tour': runTour,
   'toggle-capture': () => (session ? stop() : start()),
   'toggle-mute': () => setMuted(!muted),
+  'flush-audio': flushAudio,
   'clear-captions': clearCaptions,
   'new-call': newCall,
   'copy-transcript': copyTranscript,
@@ -1069,5 +1428,4 @@ applyAppearance();
 renderHoldTimer();
 overlay.classList.add('idle');
 setInterval(pollMeters, METER_INTERVAL_MS);
-// Indicator only: monitoring always runs, since there is no longer a click to turn it on.
-void startMicMonitor();
+void refreshMic();

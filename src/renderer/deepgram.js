@@ -36,6 +36,13 @@ export class DeepgramStream {
     }
   }
 
+  // Finalize makes Deepgram emit what it has heard so far as a final result.
+  flush() {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify({ type: 'Finalize' }));
+    return true;
+  }
+
   start(audioStream) {
     this.audioStream = audioStream;
     if (!this.apiKey) {
