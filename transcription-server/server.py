@@ -5,7 +5,7 @@ export WHISPER_MODEL="large-v3-turbo"
 bash start-vast.sh
 """
 # server.py — Servidor optimizado puramente para transcripción en tiempo real (Faster-Whisper)
-import os, re, sys, asyncio, inspect, json, hashlib, secrets, time, itertools, argparse, bisect, collections, unicodedata
+import os, re, sys, asyncio, inspect, json, hashlib, secrets, time, itertools, argparse, bisect, collections, unicodedata, wave
 from datetime import datetime, timezone, timedelta
 
 # ---- Códigos de acceso autorizados ----
@@ -525,7 +525,7 @@ def admin_stats(request: Request):
     }
 
 # WHISPER_MODEL permite probar otro tamaño sin tocar el código (p. ej. "medium" o "large-v3-turbo").
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 print(f"Cargando modelo Whisper '{WHISPER_MODEL}' en la GPU...")
 model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
 print("¡Whisper cargado correctamente!")
@@ -533,17 +533,41 @@ print("¡Whisper cargado correctamente!")
 # Los modelos large-v3 (y sobre todo turbo, con solo 4 capas de decodificador) se desvían con prompts largos
 # y van sobrados de velocidad, así que usan otro ajuste. El resto (small, medium...) conserva el original.
 # BEAM_SIZE y STYLE_PROMPT=0/1 lo fuerzan para comparar sin tocar el código.
-IS_V3_MODEL  = "large-v3" in WHISPER_MODEL
+# faster-whisper resuelve "large" a large-v3 y "turbo" a large-v3-turbo.
+IS_V3_MODEL  = WHISPER_MODEL in ("large", "turbo") or "large-v3" in WHISPER_MODEL
 BEAM_SIZE    = int(os.environ.get("BEAM_SIZE", "5" if IS_V3_MODEL else "3"))
 STYLE_PROMPT = os.environ.get("STYLE_PROMPT", "0" if IS_V3_MODEL else "1") != "0"
-print(f"Ajustes de decodificación: beam_size={BEAM_SIZE}, prompt de estilo={'sí' if STYLE_PROMPT else 'no'}")
+# Pasar lo dicho antes como prompt hace que Whisper copie palabras y cifras de ahí ("tenía 8.0" → otro "8.0"
+# donde se dijo 9.0). Apagado por defecto; CONTEXT_PROMPT=1 lo vuelve a activar para comparar.
+CONTEXT_PROMPT = os.environ.get("CONTEXT_PROMPT", "0") != "0"
+
+# Términos que Whisper debe tender a reconocer (parámetro hotwords de faster-whisper). Es una lista corta a
+# propósito: con muchas palabras turbo empieza a desviarse igual que con un prompt largo. HOTWORDS_ES/HOTWORDS_EN
+# la sustituyen; vacía la apaga.
+HOTWORDS = {
+    "es": os.environ.get("HOTWORDS_ES", "glucosa, hemoglobina A1c, insulina, metformina, presión arterial, "
+                                        "colesterol, miligramos, mg/dL, dosis, receta"),
+    "en": os.environ.get("HOTWORDS_EN", "glucose, hemoglobin A1c, insulin, metformin, blood pressure, "
+                                        "cholesterol, milligrams, mg/dL, dosage, prescription"),
+}
+print(f"Ajustes de decodificación: beam_size={BEAM_SIZE}, prompt de estilo={'sí' if STYLE_PROMPT else 'no'}, "
+      f"contexto previo={'sí' if CONTEXT_PROMPT else 'no'}, hotwords={'sí' if any(HOTWORDS.values()) else 'no'}")
+
+# SAVE_SEGMENTS=<carpeta> guarda cada segmento en WAV con su transcripción al lado, para escuchar exactamente qué
+# recibió Whisper. Solo para llamadas de prueba: con pacientes reales serían datos protegidos (HIPAA).
+SAVE_SEGMENTS = os.environ.get("SAVE_SEGMENTS", "")
+if SAVE_SEGMENTS:
+    print(f"⚠️  Guardando cada segmento de audio en {SAVE_SEGMENTS}")
 
 # ---- Parámetros de segmentación y estilos ----
+# Segmentos de 1–2 s dejan a Whisper sin contexto y fallan mucho más en palabras sueltas, fármacos y cifras:
+# la pausa de corte es de 0.8 s para que una frase no se trocee en cada respiración.
 SAMPLE_RATE    = 16000
 RMS_THRESHOLD  = 0.012
-SILENCE_CUT_S  = 0.5
+SILENCE_CUT_S  = 0.8
 MIN_SEGMENT_S  = 1.0
-MAX_SEGMENT_S  = 8.0
+MAX_SEGMENT_S  = 14.0
+CUT_SEARCH_S   = 2.0  # al llegar a MAX_SEGMENT_S se corta en el punto más silencioso de estos últimos segundos
 PREROLL_S      = 0.3
 DEBUG_RMS      = False
 
@@ -559,6 +583,30 @@ def rms_int16(data: bytes) -> float:
         return 0.0
     a = np.frombuffer(data[:n], dtype=np.int16).astype(np.float32) / 32768.0
     return float(np.sqrt(np.mean(a * a)))
+
+def quietest_cut(pcm: bytearray) -> int:
+    """Byte donde cortar un búfer que llegó a MAX_SEGMENT_S sin pausa: el centro de la ventana de 100 ms más
+    silenciosa de los últimos CUT_SEARCH_S. Cortar justo en el límite partía palabras, que salían mal en los dos
+    segmentos; lo que queda tras el corte pasa al siguiente."""
+    a = np.frombuffer(bytes(pcm[:len(pcm) - len(pcm) % 2]), dtype=np.int16).astype(np.float32)
+    win = int(0.1 * SAMPLE_RATE)
+    start = max(0, len(a) - int(CUT_SEARCH_S * SAMPLE_RATE))
+    n = (len(a) - start) // win
+    if n == 0:
+        return len(a) * 2
+    energy = (a[start:start + n * win].reshape(n, win) ** 2).mean(axis=1)
+    return (start + int(np.argmin(energy)) * win + win // 2) * 2
+
+def save_segment(audio, client_id: int, text: str, lang, motivo: str):
+    os.makedirs(SAVE_SEGMENTS, exist_ok=True)
+    name = os.path.join(SAVE_SEGMENTS, f"{datetime.now():%Y%m%d-%H%M%S-%f}-c{client_id}")
+    with wave.open(name + ".wav", "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+    with open(name + ".txt", "w", encoding="utf-8") as f:
+        f.write(f"[{lang}] ({motivo}, {len(audio) / SAMPLE_RATE:.1f} s) {text or '(vacío / filtrado)'}\n")
 
 # La detección de idioma de Whisper falla a menudo en fragmentos cortos o con acento. Si su reparto entre
 # es/en no supera LANG_CONFIDENT, se transcribe en ambos idiomas y se queda el que Whisper decodifica con más
@@ -643,7 +691,7 @@ def uncertain_tokens(text: str, words) -> list[int]:
 
 def run_transcribe(audio, lang, prev_text, prev_lang):
     """Transcribe forzando `lang`. Devuelve (texto, avg_logprob ponderado por duración, palabras dudosas)."""
-    context = prev_text[-150:] if (prev_text and lang == prev_lang and any(c in prev_text for c in ",.?!¿")) else ""
+    context = prev_text[-150:] if (CONTEXT_PROMPT and prev_text and lang == prev_lang and any(c in prev_text for c in ",.?!¿")) else ""
     style = STYLE_PROMPTS.get(lang, "") if STYLE_PROMPT else ""
     prompt = (style + " " + context).strip() or None
     segments, _ = model.transcribe(
@@ -654,6 +702,7 @@ def run_transcribe(audio, lang, prev_text, prev_lang):
         vad_parameters=dict(min_silence_duration_ms=500),
         condition_on_previous_text=False,
         initial_prompt=prompt,
+        hotwords=HOTWORDS.get(lang) or None,
         word_timestamps=WORD_CONFIDENCE,
     )
     # transcribe() es perezoso: el trabajo de GPU ocurre al recorrer los segmentos.
@@ -795,9 +844,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             usable = len(pcm) - (len(pcm) % 2)
-            audio = np.frombuffer(bytes(pcm[:usable]), dtype=np.int16).astype(np.float32) / 32768.0
-            pcm.clear()
-            has_speech = False
+            cut = quietest_cut(pcm) if (demasiado_largo and not pausa and not manual) else usable
+            audio = np.frombuffer(bytes(pcm[:cut]), dtype=np.int16).astype(np.float32) / 32768.0
+            if cut < usable:
+                del pcm[:cut]
+            else:
+                pcm.clear()
+            # Si se cortó en mitad del habla, lo que queda sigue siendo voz y abre el siguiente segmento.
+            has_speech = len(pcm) >= 2
             silence_s = 0.0
 
             # Eliminar o dejar vencer un código corta también la sesión que ya estaba abierta.
@@ -827,6 +881,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 metrics.in_flight -= 1
             metrics.segment(code_hash, len(audio) / SAMPLE_RATE, timings["start"] - t_ready, timings["detect_s"],
                             timings["proc_s"], time.perf_counter() - t_ready, concurrency)
+
+            if SAVE_SEGMENTS:
+                try:
+                    save_segment(audio, client_id, text, lang, motivo)
+                except OSError as e:
+                    print(f"[SAVE_SEGMENTS ERROR]: {e}")
 
             if not text:
                 print("[WHISPER] Silencio/ruido filtrado.")
