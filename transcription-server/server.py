@@ -1,7 +1,6 @@
 """
-export PUBLIC_HOSTNAME=whisper.life-caption-plus.bid 
-export WHISPER_MODEL="large-v3-turbo" 
-STYLE_PROMPT=1 bash start-vast.sh
+Tokens y dominio: en .env (copia .env.example); start-vast.sh lo carga.
+bash start-vast.sh
 
 probar 10 clientes
 python test_multiple_users.py ws://localhost:8000/ws/transcribe test.wav $(head -n 10 codes.txt)

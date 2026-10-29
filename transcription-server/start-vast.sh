@@ -7,11 +7,26 @@
 #   bash start-vast.sh
 #       Quick tunnel: URL aleatoria *.trycloudflare.com que cambia en cada arranque (solo pruebas).
 #
+# Los secretos (CLOUDFLARE_TUNNEL_TOKEN, HF_TOKEN) y el dominio van en un .env junto a este script, que git
+# ignora: copia .env.example a .env y rellénalo. Lo que se pase en la línea de comandos tiene prioridad.
+#
 # Opciones:
 #   --verbose, -v   Muestra cada segmento (texto, traducción, tiempos) y las peticiones del panel admin.
 #                   Sin ella la consola solo enseña el arranque, conexiones y errores.
 set -e
 cd "$(dirname "$0")"
+
+# Carga .env sin pisar lo que ya venga del entorno (STYLE_PROMPT=1 bash start-vast.sh sigue mandando).
+if [ -f .env ]; then
+  while IFS='=' read -r key value; do
+    [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
+    [ -n "${!key+x}" ] && continue
+    value="${value%$'\r'}"
+    value="${value%\"}"; value="${value#\"}"
+    value="${value%\'}"; value="${value#\'}"
+    export "$key=$value"
+  done < .env
+fi
 
 for arg in "$@"; do
   case "$arg" in
