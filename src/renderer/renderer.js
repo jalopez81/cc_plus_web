@@ -497,6 +497,11 @@ function handleProcessing(started) {
   if (!started) {
     const dropped = pending.shift();
     if (dropped) showLatency(dropped.block, dropped.block?.latency ?? '');
+    // A dropped segment takes its provisional text with it.
+    if (currentBlock?.interim) {
+      currentBlock.interim = '';
+      renderBlock(currentBlock);
+    }
     if (pending.length === 0 && currentBlock?.segments.length === 0) commitBlock();
     else if (pending.length) showLatency(pending[0].block, '↑', true);
     return;
@@ -583,6 +588,13 @@ function fillSentences(container, items) {
   const nodes = [];
   items.forEach((item, k) => {
     if (k > 0) nodes.push(ENDS_SENTENCE.test(items[k - 1].text) ? '\n' : ' ');
+    if (item.provisional) {
+      const span = document.createElement('span');
+      span.className = 'provisional';
+      span.textContent = item.text;
+      nodes.push(span);
+      return;
+    }
     if (!item.pair) {
       nodes.push(item.text);
       return;
@@ -614,7 +626,18 @@ function renderBlock(block) {
       trItems.push(...tr);
     }
   });
-  if (block.interim) srcItems.push(...splitSentences(block.interim).map((text) => ({ text })));
+  // Provisional text goes with its provisional translation: clearing one (the final reply arrived) clears both.
+  if (!block.interim) {
+    block.interimShown = '';
+    block.interimTr = '';
+    block.interimTrShown = '';
+  }
+  if (block.interimShown) {
+    srcItems.push(...splitSentences(block.interimShown).map((text) => ({ text, provisional: true })));
+  }
+  if (block.interimTrShown && !trPending) {
+    trItems.push(...splitSentences(block.interimTrShown).map((text) => ({ text, provisional: true })));
+  }
 
   fillSentences(block.el.querySelector('.text'), srcItems);
   fillSentences(block.el.querySelector('.tr'), trItems);
@@ -845,7 +868,57 @@ async function translateSegment(block, seg) {
   logSegment(block, seg);
 }
 
-function handleTranscript({ text, language, confident, uncertain, translation, translation_language }) {
+// Highest segment the server has given a final reply for; provisional text for it or earlier is stale.
+let lastFinalSeg = 0;
+
+// Provisional text from the Whisper server while someone is still speaking: shown greyed in the bubble (the
+// same slot Deepgram's interim results use) until the segment's final transcript and translation replace it.
+function handlePartial({ text, language, translation, translation_language, seg }) {
+  const transcript = String(text ?? '').trim();
+  if (!transcript || (seg !== null && seg <= lastFinalSeg)) return;
+  resetHoldTimer();
+  const lang = resolveLang(language, transcript);
+  if (currentBlock && currentBlock.lang !== lang) commitBlock();
+  if (!currentBlock) currentBlock = createBlock(lang);
+  // Same check as the final text: a translation made from the other language's guess points the wrong way.
+  const serverTarget = translation_language ? baseLang(translation_language) : targetFor(lang);
+  currentBlock.interim = transcript;
+  currentBlock.interimTr = serverTarget === targetFor(lang) ? String(translation ?? '').trim() : '';
+  typeField(currentBlock, 'interim');
+  typeField(currentBlock, 'interimTr');
+  if (pending.length) showLatency(currentBlock, '↑', true);
+}
+
+// The server sends provisional text (and its translation) every ~1.5 s; new words are typed out one by one
+// across most of that gap, so both columns keep flowing instead of jumping. Words already on screen that still
+// match stay put; a corrected word swaps in at once and only what follows it is typed. The final text still
+// lands at once.
+const TYPE_SPREAD_MS = 1200;
+const TYPE_MAX_STEP_MS = 150;
+
+// `key` is 'interim' (original) or 'interimTr' (translation); what is on screen so far lives in `${key}Shown`.
+function typeField(block, key) {
+  const shownKey = `${key}Shown`;
+  const timerKey = `${key}Timer`;
+  clearTimeout(block[timerKey]);
+  const text = block[key] || '';
+  const target = text.split(/\s+/).filter(Boolean);
+  const shown = (block[shownKey] || '').split(/\s+/).filter(Boolean);
+  let n = 0;
+  while (n < shown.length && n < target.length && shown[n] === target[n]) n++;
+  if (reducedMotion.matches) n = target.length;
+  const step = Math.min(TYPE_MAX_STEP_MS, TYPE_SPREAD_MS / Math.max(1, target.length - n));
+  const tick = () => {
+    if ((block[key] || '') !== text) return; // replaced by newer text, or cleared by the final one
+    block[shownKey] = target.slice(0, n).join(' ');
+    renderBlock(block);
+    if (n++ < target.length) block[timerKey] = setTimeout(tick, step);
+  };
+  tick();
+}
+
+function handleTranscript({ text, language, confident, uncertain, translation, translation_language, seg: segNo }) {
+  if (Number.isInteger(segNo)) lastFinalSeg = Math.max(lastFinalSeg, segNo);
   const transcript = String(text ?? '').trim();
   if (!transcript) return;
   const lang = resolveLang(language, transcript, confident);
@@ -867,6 +940,7 @@ function handleTranscript({ text, language, confident, uncertain, translation, t
     uncertain: uncertain ?? [],
   };
   currentBlock.segments.push(seg);
+  currentBlock.interim = ''; // the final text replaces the provisional one
   renderBlock(currentBlock);
   settleLatency(currentBlock);
   if (seg.tr === undefined) void translateSegment(currentBlock, seg);
@@ -895,7 +969,9 @@ function handleDeepgramTranscript({ text, language, isFinal, speechFinal }) {
     else logSegment(currentBlock, seg);
     if (speechFinal) handleUtteranceEnd();
   } else {
+    // Deepgram's interim results come several times a second, already word by word: shown as they are.
     currentBlock.interim = transcript;
+    currentBlock.interimShown = transcript;
     renderBlock(currentBlock);
   }
 }
@@ -1050,6 +1126,7 @@ async function start() {
       if (state === 'error') stop({ keepStatus: true });
     };
     pending.length = 0; // segments left in flight by the last session never get a reply
+    lastFinalSeg = 0; // a new connection numbers its segments from 1 again
     const transcription =
       settings.transcriptionEngine === 'deepgram'
         ? new DeepgramStream({
@@ -1065,6 +1142,7 @@ async function start() {
             onStatus,
             onWelcome: onAccepted,
             onProcessing: handleProcessing,
+            onPartial: handlePartial,
           });
 
     transcription.setMuted(muted);

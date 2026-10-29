@@ -443,6 +443,11 @@ body.paragraphs .cap .tr {
   font-style: italic;
 }
 
+/* Words still being spoken: the final transcript (and its translation) replaces them. */
+.cap .provisional {
+  color: var(--muted);
+}
+
 .cap .flag {
   width: 20px;
   height: 14px;

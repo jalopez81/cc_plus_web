@@ -10,13 +10,14 @@ function float32ToInt16(samples) {
 }
 
 export class WhisperStream {
-  constructor({ url, accessCode, onTranscript, onStatus, onWelcome, onProcessing }) {
+  constructor({ url, accessCode, onTranscript, onStatus, onWelcome, onProcessing, onPartial }) {
     this.url = url;
     this.accessCode = accessCode;
     this.onTranscript = onTranscript;
     this.onStatus = onStatus;
     this.onWelcome = onWelcome; // called with { name, usedS } once the server accepts the code
     this.onProcessing = onProcessing; // true when the server starts on a segment, false if it drops it
+    this.onPartial = onPartial; // provisional text while someone is still speaking, replaced by the final one
     this.ws = null;
     this.audioContext = null;
     this.processor = null;
@@ -78,6 +79,18 @@ export class WhisperStream {
           this.onProcessing?.(data.processing);
           return;
         }
+        // Segment numbers let a provisional text that arrives after its segment's reply be ignored.
+        const seg = Number.isInteger(data?.seg) ? data.seg : null;
+        if (data && typeof data.partial === 'string') {
+          this.onPartial?.({
+            text: data.partial,
+            language: data.language || null,
+            translation: typeof data.translation === 'string' ? data.translation : '',
+            translation_language: data.translation_language ?? null,
+            seg,
+          });
+          return;
+        }
         if (data && typeof data.transcript === 'string') {
           this.onTranscript({
             text: data.transcript,
@@ -86,6 +99,7 @@ export class WhisperStream {
             uncertain: Array.isArray(data.uncertain) ? data.uncertain.filter(Number.isInteger) : [],
             translation: typeof data.translation === 'string' ? data.translation : '',
             translation_language: data.translation_language ?? null,
+            seg,
           });
         }
       } catch (err) {

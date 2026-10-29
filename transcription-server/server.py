@@ -1,7 +1,11 @@
 """
 export PUBLIC_HOSTNAME=whisper.life-caption-plus.bid 
 export WHISPER_MODEL="large-v3-turbo" 
-bash start-vast.sh
+STYLE_PROMPT=1 bash start-vast.sh
+
+probar 10 clientes
+python test_multiple_users.py ws://localhost:8000/ws/transcribe test.wav $(head -n 10 codes.txt)
+
 """
 # server.py — Servidor optimizado puramente para transcripción en tiempo real (Faster-Whisper)
 import os, re, sys, asyncio, inspect, json, hashlib, secrets, time, itertools, argparse, bisect, collections, unicodedata, wave
@@ -554,7 +558,9 @@ print("¡Whisper cargado correctamente!")
 # Beam 3 en vez de 5 para atender a 8–9 usuarios en una RTX 3060; BEAM_SIZE=5 si se nota en la calidad.
 IS_V3_MODEL  = WHISPER_MODEL in ("large", "turbo") or "large-v3" in WHISPER_MODEL
 BEAM_SIZE    = int(os.environ.get("BEAM_SIZE", "3"))
-STYLE_PROMPT = os.environ.get("STYLE_PROMPT", "0" if IS_V3_MODEL else "1") != "0"
+# Para turbo estaba apagado (se desviaba con prompts largos), pero sin él a veces el español salía sin
+# puntuación y MADLAD, con dos frases pegadas, inventaba. Encendido en todas las pruebas buenas: por defecto.
+STYLE_PROMPT = os.environ.get("STYLE_PROMPT", "1") != "0"
 # Pasar lo dicho antes como prompt hace que Whisper copie palabras y cifras de ahí ("tenía 8.0" → otro "8.0"
 # donde se dijo 9.0). Apagado por defecto; CONTEXT_PROMPT=1 lo vuelve a activar para comparar.
 CONTEXT_PROMPT = os.environ.get("CONTEXT_PROMPT", "0") != "0"
@@ -644,7 +650,11 @@ SILENCE_CUT_S  = 1.0
 SHORT_SPEECH_S = 3.0
 END_OF_TURN_S  = 1.5
 MIN_SEGMENT_S  = 1.0
-MAX_SEGMENT_S  = 10.0  # con quien habla sin pausas, nada se ve hasta este límite; 14 s se hacía eterno
+# Con quien habla sin pausas, el texto definitivo espera hasta este límite; mientras, la app ve el provisional
+# (PARTIALS). Con 6 s las frases largas no cabían en lo que se puede retener (HOLD_MAX_S) y salían partidas
+# y con palabras repetidas en el borde ("hablo muy" + "Muy rápido"); la traducción de esos trozos inventaba.
+# MAX_SEGMENT_S en el entorno permite comparar.
+MAX_SEGMENT_S  = float(os.environ.get("MAX_SEGMENT_S", "10.0"))
 CUT_SEARCH_S   = 2.5  # al llegar a MAX_SEGMENT_S se corta en el punto más silencioso de estos últimos segundos
 PREROLL_S      = 1.0  # audio previo que se conserva al empezar a hablar (Whisper recorta el silencio que sobre)
 DEBUG_RMS      = os.environ.get("DEBUG_RMS", "0") != "0"  # imprime el volumen y el umbral de cada trozo recibido
@@ -874,7 +884,9 @@ def transcribe_sync(audio, prev_text="", prev_lang=None):
 # segmento cortado por el límite no se muestra: su audio vuelve al búfer y se transcribe con lo que sigue.
 # Si esa frase ocupa más de HOLD_MAX_S (o no hay ningún final de frase), se retienen solo las palabras de
 # los últimos HOLD_TAIL_S. Necesita los tiempos por palabra (WORD_CONFIDENCE=1, el valor por defecto).
-HOLD_MAX_S  = 8.0
+# Lo retenido tiene que ser bastante menor que MAX_SEGMENT_S: si no, el siguiente segmento sería casi todo
+# audio repetido y volvería a cortarse enseguida.
+HOLD_MAX_S  = min(8.0, MAX_SEGMENT_S * 0.8)
 HOLD_TAIL_S = 2.0
 
 def split_unfinished(words, audio_s: float):
@@ -890,7 +902,43 @@ def split_unfinished(words, audio_s: float):
         return None
     return words[:keep], max(0.0, words[keep].start - 0.1)
 
+# Texto provisional: mientras alguien habla, cada PARTIAL_EVERY_S de audio nuevo se transcribe lo acumulado,
+# rápido (beam 1, sin traducir), y la app lo muestra en gris hasta que llega la versión definitiva con su
+# traducción. Cuesta GPU (cada pasada codifica el audio entero), así que solo se hace con la GPU libre: si
+# todos los workers están ocupados con segmentos definitivos, se salta. PARTIALS=0 lo apaga.
+PARTIALS        = os.environ.get("PARTIALS", "1") != "0"
+PARTIAL_EVERY_S = float(os.environ.get("PARTIAL_EVERY_S", "1.5"))
+partials_running = 0
+
+def partial_sync(audio):
+    """(texto, idioma) provisional; sin texto si Whisper oye un idioma que no es es/en (fragmento muy corto)."""
+    segments, info = model.transcribe(
+        audio, language=None, beam_size=1, vad_filter=True, vad_parameters=dict(min_silence_duration_ms=500),
+        condition_on_previous_text=False, without_timestamps=True, word_timestamps=False,
+    )
+    segs = [s for s in segments if keep_segment(audio, s)]
+    if info.language not in ALLOWED_LANGS or not segs:
+        return "", None
+    return collapse_repeats("".join(s.text for s in segs).strip()), info.language
+
 SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+def partial_translate(text: str, src: str, cache: dict):
+    """Traducción rápida del texto provisional: beam 1 y solo las frases nuevas. Las frases ya terminadas no
+    cambian entre un provisional y el siguiente, así que salen de `cache`; solo la última, que sigue creciendo,
+    se traduce cada vez. Las cifras van tapadas como en la definitiva; si una frase sale rota se omite (es
+    provisional, mejor sin traducir que con algo inventado)."""
+    tgt = "en" if src == "es" else "es"
+    sentences = [s for s in SENTENCE_END.split(text) if s.strip()]
+    todo = [s for s in sentences if s not in cache and sentence_lang(s, src) != tgt]
+    if todo:
+        masked = [mask_numbers(s) for s in todo]
+        for s, (_, numbers), out in zip(todo, masked, run_mt([m for m, _ in masked], tgt, mt_tokenizers[src], beam=1)):
+            out = unmask_numbers(out, numbers)
+            cache[s] = "" if out is None or looks_broken(out, s) else out
+    parts = [s if sentence_lang(s, src) == tgt else cache.get(s, "") for s in sentences]
+    return " ".join(p for p in parts if p), tgt
+
 # Cifras con sus separadores, incluido el guion de los teléfonos (1-431-1000) y rangos (5-10).
 NUMBER = re.compile(r"\d+(?:[.,:/-]\d+)*")
 # Lo que un traductor puede devolver sin estar roto: alfabeto latino con acentos, puntuación y símbolos comunes.
@@ -1063,6 +1111,38 @@ async def websocket_endpoint(websocket: WebSocket):
     held_text = ""  # lo que Whisper entendió en ese audio, por si al repetirlo se lo salta
     levels, levels_s = collections.deque(), 0.0  # (rms, duración) de lo recibido, para el umbral adaptativo
     threshold = RMS_THRESHOLD
+    # Número del segmento que se está acumulando. Va en el texto provisional y en la respuesta definitiva, para
+    # que la app descarte un provisional que llegue tarde, cuando su segmento ya tiene respuesta.
+    seg_no = 1
+    partial_task, partial_mark = None, 0.0  # tarea en curso y duración del búfer en el último provisional
+
+    partial_tr_cache = {}  # frase → traducción provisional, del segmento en curso
+
+    async def send_partial(n, pcm_bytes):
+        # Cuenta como trabajo de GPU hasta enviar, traducción incluida: si no, con la GPU llena se seguían
+        # lanzando provisionales y el definitivo de 10 clientes pasaba de 2.1 s a 4.5 s.
+        global partials_running
+        partials_running += 1
+        try:
+            audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+            text, lang = await loop.run_in_executor(None, partial_sync, audio)
+            if not text or n != seg_no:  # si ya se cortó el segmento, la respuesta definitiva va por delante
+                return
+            msg = {"partial": text, "language": lang, "seg": n}
+            # La traducción provisional va con el texto, para que la columna de traducción no espere al
+            # definitivo. Es de una frase a medio decir: la app la muestra en gris y la reemplaza.
+            if mt_model:
+                translation, tr_lang = await loop.run_in_executor(None, partial_translate, text, lang, partial_tr_cache)
+                msg.update(translation=translation, translation_language=tr_lang)
+            if n != seg_no:
+                return
+            vlog(f"   … [{lang.upper()}] {text}" + (f" → {msg['translation']}" if "translation" in msg else ""))
+            await websocket.send_json(msg)
+        except Exception as e:
+            if not client.get("replaced"):
+                print(f"[PROVISIONAL ERROR]: {e}")
+        finally:
+            partials_running -= 1
     prev_text = ""
     prev_lang = None
     recent = collections.deque(maxlen=MAX_REPEATS)
@@ -1119,6 +1199,11 @@ async def websocket_endpoint(websocket: WebSocket):
             pausa = silence_s >= needed and buf_s >= MIN_SEGMENT_S
             demasiado_largo = buf_s >= MAX_SEGMENT_S
             if not (pausa or demasiado_largo or manual):
+                if (PARTIALS and buf_s - partial_mark >= PARTIAL_EVERY_S
+                        and (partial_task is None or partial_task.done())
+                        and metrics.in_flight + partials_running < WHISPER_WORKERS):
+                    partial_mark = buf_s
+                    partial_task = asyncio.create_task(send_partial(seg_no, bytes(pcm)))
                 continue
 
             usable = len(pcm) - (len(pcm) % 2)
@@ -1132,6 +1217,9 @@ async def websocket_endpoint(websocket: WebSocket):
             # Si se cortó en mitad del habla, lo que queda sigue siendo voz y abre el siguiente segmento.
             has_speech = len(pcm) >= 2
             silence_s = 0.0
+            this_seg, seg_no = seg_no, seg_no + 1
+            partial_mark = len(pcm) / 2 / SAMPLE_RATE
+            partial_tr_cache.clear()
 
             # Ruido que pasó el umbral de volumen pero no tiene voz: fuera sin gastar GPU (antes llegaba a
             # Whisper y a veces salía un "Gracias.").
@@ -1232,6 +1320,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "language": lang,
                 "confident": confident,
                 "uncertain": uncertain,  # índices de palabras (text.split()) que Whisper no tiene claras
+                "seg": this_seg,
             }
             if mt_model:
                 try:
