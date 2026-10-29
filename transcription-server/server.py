@@ -629,8 +629,8 @@ SAMPLE_RATE    = 16000
 RMS_THRESHOLD  = 0.012
 SILENCE_CUT_S  = 0.8
 MIN_SEGMENT_S  = 1.0
-MAX_SEGMENT_S  = 14.0
-CUT_SEARCH_S   = 2.0  # al llegar a MAX_SEGMENT_S se corta en el punto más silencioso de estos últimos segundos
+MAX_SEGMENT_S  = 10.0  # con quien habla sin pausas, nada se ve hasta este límite; 14 s se hacía eterno
+CUT_SEARCH_S   = 2.5  # al llegar a MAX_SEGMENT_S se corta en el punto más silencioso de estos últimos segundos
 PREROLL_S      = 0.3
 DEBUG_RMS      = False
 
@@ -648,17 +648,20 @@ def rms_int16(data: bytes) -> float:
     return float(np.sqrt(np.mean(a * a)))
 
 def quietest_cut(pcm: bytearray) -> int:
-    """Byte donde cortar un búfer que llegó a MAX_SEGMENT_S sin pausa: el centro de la ventana de 100 ms más
-    silenciosa de los últimos CUT_SEARCH_S. Cortar justo en el límite partía palabras, que salían mal en los dos
-    segmentos; lo que queda tras el corte pasa al siguiente."""
-    a = np.frombuffer(bytes(pcm[:len(pcm) - len(pcm) % 2]), dtype=np.int16).astype(np.float32)
-    win = int(0.1 * SAMPLE_RATE)
+    """Byte donde cortar un búfer que llegó a MAX_SEGMENT_S sin pausa: el centro de la ventana de 250 ms más
+    silenciosa de los últimos CUT_SEARCH_S, deslizándola de 25 en 25 ms. Cortar justo en el límite partía
+    palabras, que salían mal en los dos segmentos; lo que queda tras el corte pasa al siguiente.
+    Con ventanas de 100 ms el cierre de una "t" o una "p" contaba como pausa y partía "real-time trans|lation";
+    250 ms solo caben entre palabras."""
+    a = np.frombuffer(bytes(pcm[:len(pcm) - len(pcm) % 2]), dtype=np.int16).astype(np.float64)
+    win, hop = int(0.25 * SAMPLE_RATE), int(0.025 * SAMPLE_RATE)
     start = max(0, len(a) - int(CUT_SEARCH_S * SAMPLE_RATE))
-    n = (len(a) - start) // win
-    if n == 0:
+    if len(a) - start < win:
         return len(a) * 2
-    energy = (a[start:start + n * win].reshape(n, win) ** 2).mean(axis=1)
-    return (start + int(np.argmin(energy)) * win + win // 2) * 2
+    power = np.concatenate(([0.0], np.cumsum(a[start:] ** 2)))
+    offsets = np.arange(0, len(power) - win, hop)
+    energy = power[offsets + win] - power[offsets]
+    return (start + int(offsets[np.argmin(energy)]) + win // 2) * 2
 
 def save_segment(audio, client_id: int, text: str, lang, motivo: str):
     os.makedirs(SAVE_SEGMENTS, exist_ok=True)
@@ -850,20 +853,40 @@ def run_mt(sentences: list[str], tgt: str, tok, **options) -> list[str]:
     return [tok.decode(tok.convert_tokens_to_ids(r.hypotheses[0][skip:]), skip_special_tokens=True).strip()
             for r in results]
 
+# Palabras muy frecuentes de cada idioma, para saber en qué idioma está cada frase de un segmento.
+# Fuera las que existen en los dos ("no", "me", "he", "has", "son").
+ES_WORDS = set("el la los las de del que y en un una por para con es lo se su al como pero más muy qué "
+               "hay si mi yo le te esto eso está están fue ser tengo tiene puede".split())
+EN_WORDS = set("the and of to is in it that you for with on this are be was have what my i not but at so "
+               "there if do does can will your we they she am get".split())
+
+def sentence_lang(sentence: str, default: str) -> str:
+    """es/en de una frase suelta. Un segmento cortado por el límite puede juntar a dos personas, una en cada
+    idioma; Whisper deja cada parte en su idioma, y "traducir" inglés a inglés hacía que el modelo recortara
+    ("Good morning, my name is…" salió sin el "Good morning")."""
+    lower = sentence.lower()
+    words = re.findall(r"[a-záéíóúüñ']+", lower)
+    es = sum(w in ES_WORDS for w in words) + 2 * bool(re.search(r"[ñ¿¡]", lower))
+    en = sum(w in EN_WORDS for w in words)
+    return "es" if es > en else "en" if en > es else default
+
 def translate_sync(text: str, src: str):
     """Traduce es↔en frase a frase (estos modelos se entrenaron con frases sueltas), en un solo lote.
-    Devuelve (traducción, idioma destino, si las cifras coinciden, segundos)."""
+    Las frases que ya están en el idioma destino pasan tal cual. Devuelve (traducción, idioma destino,
+    si las cifras coinciden, segundos)."""
     t_start = time.perf_counter()
     tgt = "en" if src == "es" else "es"
     tok = mt_tokenizers[src]
     sentences = [s for s in SENTENCE_END.split(text) if s.strip()]
+    out: list[str | None] = [s if sentence_lang(s, src) == tgt else None for s in sentences]
+    todo = [i for i, o in enumerate(out) if o is None]
 
-    masked = [mask_numbers(s) for s in sentences]
-    first = run_mt([m for m, _ in masked], tgt, tok)
-    out: list[str | None] = []
-    for s, (_, numbers), o in zip(sentences, masked, first):
-        o = unmask_numbers(o, numbers)
-        out.append(None if o is None or looks_broken(o, s) else o)
+    if todo:
+        masked = [mask_numbers(sentences[i]) for i in todo]
+        first = run_mt([m for m, _ in masked], tgt, tok)
+        for i, (_, numbers), o in zip(todo, masked, first):
+            o = unmask_numbers(o, numbers)
+            out[i] = None if o is None or looks_broken(o, sentences[i]) else o
 
     # Lo que salió mal se reintenta sin marcas y castigando repeticiones. Si tampoco sirve, el intérprete ve la
     # frase original con ⚠: mejor sin traducir que con una cifra inventada.
