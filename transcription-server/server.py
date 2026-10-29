@@ -5,6 +5,7 @@ bash start-vast.sh
 """
 # server.py — Servidor optimizado puramente para transcripción en tiempo real (Faster-Whisper)
 import os, re, sys, asyncio, inspect, json, hashlib, secrets, time, itertools, argparse, bisect, collections, unicodedata, wave
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 
 # ---- Códigos de acceso autorizados ----
@@ -372,6 +373,7 @@ if 'metadata_errors="ignore"' in content:
         f.write(content.replace(', metadata_errors="ignore"', ""))
 
 from faster_whisper import WhisperModel
+from faster_whisper.vad import get_speech_timestamps
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
@@ -537,16 +539,21 @@ def admin_stats(request: Request):
 
 # WHISPER_MODEL permite probar otro tamaño sin tocar el código (p. ej. "medium" o "large-v3-turbo").
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
-print(f"Cargando modelo Whisper '{WHISPER_MODEL}' en la GPU...")
-model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
+# Con un solo worker, CTranslate2 atiende las transcripciones de una en una y con varios clientes forman cola.
+# Con dos, mientras un segmento está en CPU (espectrograma, VAD) o deja la GPU a medio llenar decodificando,
+# otro avanza: más segmentos por segundo en la misma tarjeta. WHISPER_WORKERS=1 vuelve a la cola única.
+WHISPER_WORKERS = int(os.environ.get("WHISPER_WORKERS", "2"))
+print(f"Cargando modelo Whisper '{WHISPER_MODEL}' en la GPU ({WHISPER_WORKERS} workers)...")
+model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16", num_workers=WHISPER_WORKERS)
 print("¡Whisper cargado correctamente!")
 
 # Los modelos large-v3 (y sobre todo turbo, con solo 4 capas de decodificador) se desvían con prompts largos
 # y van sobrados de velocidad, así que usan otro ajuste. El resto (small, medium...) conserva el original.
 # BEAM_SIZE y STYLE_PROMPT=0/1 lo fuerzan para comparar sin tocar el código.
 # faster-whisper resuelve "large" a large-v3 y "turbo" a large-v3-turbo.
+# Beam 3 en vez de 5 para atender a 8–9 usuarios en una RTX 3060; BEAM_SIZE=5 si se nota en la calidad.
 IS_V3_MODEL  = WHISPER_MODEL in ("large", "turbo") or "large-v3" in WHISPER_MODEL
-BEAM_SIZE    = int(os.environ.get("BEAM_SIZE", "5" if IS_V3_MODEL else "3"))
+BEAM_SIZE    = int(os.environ.get("BEAM_SIZE", "3"))
 STYLE_PROMPT = os.environ.get("STYLE_PROMPT", "0" if IS_V3_MODEL else "1") != "0"
 # Pasar lo dicho antes como prompt hace que Whisper copie palabras y cifras de ahí ("tenía 8.0" → otro "8.0"
 # donde se dijo 9.0). Apagado por defecto; CONTEXT_PROMPT=1 lo vuelve a activar para comparar.
@@ -583,6 +590,10 @@ TRANSLATE = os.environ.get("TRANSLATE", "1") != "0"
 MT_MODEL  = os.environ.get("MT_MODEL", "google/madlad400-3b-mt")
 MT_DIR    = os.environ.get("MT_DIR", "/workspace/mt-ct2" if os.path.isdir("/workspace") else os.path.join(BASE_DIR, "mt-ct2"))
 IS_M2M    = "m2m100" in MT_MODEL
+# Igual que WHISPER_WORKERS: traducciones en paralelo en la misma GPU. Beam 2 en vez de 4 por velocidad (las cifras
+# van tapadas y no dependen del beam); MT_BEAM=4 si se nota en la calidad.
+MT_THREADS = int(os.environ.get("MT_THREADS", "2"))
+MT_BEAM    = int(os.environ.get("MT_BEAM", "2"))
 # MADLAD indica el idioma destino con una etiqueta al inicio del texto ("<2en> …"); M2M100 fija el de origen en el
 # tokenizador y abre la salida con el token del destino ("__en__").
 
@@ -611,28 +622,67 @@ def load_translator():
     else:
         tok = AutoTokenizer.from_pretrained(target)
         tokenizers = {"es": tok, "en": tok}
-    return ctranslate2.Translator(target, device="cuda", compute_type="int8_float16"), tokenizers
+    return ctranslate2.Translator(target, device="cuda", compute_type="int8_float16", inter_threads=MT_THREADS), tokenizers
 
 mt_model, mt_tokenizers = None, {}
 if TRANSLATE:
     try:
-        print(f"Cargando traductor '{MT_MODEL}'...")
+        print(f"Cargando traductor '{MT_MODEL}' ({MT_THREADS} en paralelo, beam {MT_BEAM})...")
         mt_model, mt_tokenizers = load_translator()
         print("¡Traductor cargado correctamente!")
     except Exception as e:
         print(f"!!! No se pudo cargar el traductor ({e}); la app traducirá por su cuenta.")
 
 # ---- Parámetros de segmentación y estilos ----
-# Segmentos de 1–2 s dejan a Whisper sin contexto y fallan mucho más en palabras sueltas, fármacos y cifras:
-# la pausa de corte es de 0.8 s para que una frase no se trocee en cada respiración.
+# Segmentos de 1–2 s dejan a Whisper sin contexto y fallan mucho más en palabras sueltas, fármacos y cifras.
+# Una pausa a mitad de frase partía "puede equivocar|se con palabras": Whisper cerraba el primer trozo y el
+# segundo, de 1.3 s, salía como "Gracias." Por eso se corta tras 1.0 s de silencio, y si lo dicho hasta ahí es
+# corto (menos de SHORT_SPEECH_S) se espera a END_OF_TURN_S: o la frase sigue, o la persona terminó.
 SAMPLE_RATE    = 16000
 RMS_THRESHOLD  = 0.012
-SILENCE_CUT_S  = 0.8
+SILENCE_CUT_S  = 1.0
+SHORT_SPEECH_S = 3.0
+END_OF_TURN_S  = 1.5
 MIN_SEGMENT_S  = 1.0
 MAX_SEGMENT_S  = 10.0  # con quien habla sin pausas, nada se ve hasta este límite; 14 s se hacía eterno
 CUT_SEARCH_S   = 2.5  # al llegar a MAX_SEGMENT_S se corta en el punto más silencioso de estos últimos segundos
-PREROLL_S      = 0.3
-DEBUG_RMS      = False
+PREROLL_S      = 1.0  # audio previo que se conserva al empezar a hablar (Whisper recorta el silencio que sobre)
+DEBUG_RMS      = os.environ.get("DEBUG_RMS", "0") != "0"  # imprime el volumen y el umbral de cada trozo recibido
+
+# RMS_THRESHOLD fijo trataba como silencio a quien habla flojo, y también el final de frase que se dice más
+# bajo ("…se con palabras"): cortaba a mitad de frase. El umbral de cada cliente se calcula a partir de su
+# ruido de fondo, el percentil 20 del volumen de los últimos NOISE_WINDOW_S (en una conversación siempre hay
+# pausas): 3 veces ese ruido, sin bajar de MIN_RMS. Los trozos de silencio digital (micrófono silenciado, el
+# relleno de ceros del script de prueba) no cuentan: con ellos el ruido salía 0, el umbral se iba al mínimo y
+# el ruido entre frases contaba como voz, así que nunca había pausa y todo se cortaba por el límite.
+# Nunca sube por encima de RMS_THRESHOLD: con mucho ruido se comporta como antes, en vez de dejar de oír.
+NOISE_WINDOW_S = 20.0
+MIN_RMS        = 0.006
+DIGITAL_SILENCE = 0.0005
+
+def speech_threshold(levels, levels_s: float) -> float:
+    real = [lv for lv, _ in levels if lv >= DIGITAL_SILENCE]
+    if levels_s < 2.0 or len(real) < 5:
+        return RMS_THRESHOLD
+    return min(RMS_THRESHOLD, max(MIN_RMS, 3 * float(np.percentile(real, 20))))
+
+# El volumen solo abre el búfer; las pausas las decide Silero VAD (el mismo detector que usa faster-whisper,
+# en CPU). En una grabación con el ruido a la mitad del volumen de la voz ningún umbral servía: bajo, el ruido
+# contaba como voz y nunca había pausa; alto, el final flojo de una frase contaba como silencio y la partía.
+# Se mira solo el final del búfer (VAD_TAIL_S) para que cada trozo recibido cueste unos pocos milisegundos.
+VAD_TAIL_S = 3.0
+
+def _speech(pcm: bytes, **opts):
+    audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    return audio, get_speech_timestamps(audio, threshold=0.5, speech_pad_ms=30, **opts)
+
+def trailing_silence(pcm: bytes) -> float:
+    """Segundos sin voz al final de `pcm` (todo `pcm` si no hay voz)."""
+    audio, spans = _speech(pcm, min_silence_duration_ms=100)
+    return (len(audio) - (spans[-1]["end"] if spans else 0)) / SAMPLE_RATE
+
+def has_voice(pcm: bytes) -> bool:
+    return bool(_speech(pcm)[1])
 
 ALLOWED_LANGS = ("es", "en")
 STYLE_PROMPTS = {
@@ -677,7 +727,7 @@ def save_segment(audio, client_id: int, text: str, lang, motivo: str):
 # La detección de idioma de Whisper falla a menudo en fragmentos cortos o con acento. Si su reparto entre
 # es/en no supera LANG_CONFIDENT, se transcribe en ambos idiomas y se queda el que Whisper decodifica con más
 # seguridad. No se favorece el idioma anterior: en una llamada interpretada cada turno cambia de idioma.
-LANG_CONFIDENT = 0.80
+LANG_CONFIDENT = float(os.environ.get("LANG_CONFIDENT", "0.80"))
 
 # Whisper "oye" estas frases en ruido, música o voces lejanas. Solo se descartan si además el audio es flojo
 # o Whisper duda; un "thank you" claro y en primer plano se mantiene.
@@ -756,11 +806,12 @@ def uncertain_tokens(text: str, words) -> list[int]:
     return out
 
 def run_transcribe(audio, lang, prev_text, prev_lang):
-    """Transcribe forzando `lang`. Devuelve (texto, avg_logprob ponderado por duración, palabras dudosas)."""
+    """Transcribe forzando `lang`. Devuelve (texto, avg_logprob ponderado por duración, palabras dudosas,
+    palabras con sus tiempos)."""
     context = prev_text[-150:] if (CONTEXT_PROMPT and prev_text and lang == prev_lang and any(c in prev_text for c in ",.?!¿")) else ""
     style = STYLE_PROMPTS.get(lang, "") if STYLE_PROMPT else ""
     prompt = (style + " " + context).strip() or None
-    segments, _ = model.transcribe(
+    segments, info = model.transcribe(
         audio,
         language=lang,
         beam_size=BEAM_SIZE,
@@ -772,14 +823,18 @@ def run_transcribe(audio, lang, prev_text, prev_lang):
         word_timestamps=WORD_CONFIDENCE,
     )
     # transcribe() es perezoso: el trabajo de GPU ocurre al recorrer los segmentos.
-    segs = [s for s in segments if keep_segment(audio, s)]
+    raw = list(segments)
+    segs = [s for s in raw if keep_segment(audio, s)]
     if not segs:
-        return "", float("-inf"), []
+        # Para saber quién se comió el audio: el VAD (poco o nada tras él) o Whisper (audio de sobra, sin texto).
+        vlog(f"[WHISPER] sin texto en {lang}: {info.duration_after_vad:.1f} de {info.duration:.1f} s pasan el VAD, "
+             f"{len(raw)} segmentos de Whisper")
+        return "", float("-inf"), [], []
     weights = [max(s.end - s.start, 0.01) for s in segs]
     score = sum(s.avg_logprob * w for s, w in zip(segs, weights)) / sum(weights)
     text = collapse_repeats("".join(s.text for s in segs).strip())
     words = [w for s in segs for w in (s.words or [])]
-    return text, score, uncertain_tokens(text, words)
+    return text, score, uncertain_tokens(text, words), words
 
 def transcribe_sync(audio, prev_text="", prev_lang=None):
     t_start = time.perf_counter()
@@ -795,16 +850,45 @@ def transcribe_sync(audio, prev_text="", prev_lang=None):
     # 2. Transcripción en el idioma original
     confident = shares[lang] >= LANG_CONFIDENT
     if confident:
-        transcript_text, _, uncertain = run_transcribe(audio, lang, prev_text, prev_lang)
+        transcript_text, _, uncertain, words = run_transcribe(audio, lang, prev_text, prev_lang)
     else:
-        results = {c: run_transcribe(audio, c, prev_text, prev_lang) for c in ALLOWED_LANGS}
+        # Con la GPU libre, es y en se transcriben a la vez y la duda no duplica la espera. Si hay otros segmentos
+        # en curso van una detrás de otra: con 5 clientes dudando a la vez, 10 transcripciones simultáneas
+        # dejaban las traducciones esperando 2–2.6 s.
+        if metrics.in_flight <= 1:
+            with ThreadPoolExecutor(max_workers=len(ALLOWED_LANGS)) as pool:
+                futures = {c: pool.submit(run_transcribe, audio, c, prev_text, prev_lang) for c in ALLOWED_LANGS}
+                results = {c: f.result() for c, f in futures.items()}
+        else:
+            results = {c: run_transcribe(audio, c, prev_text, prev_lang) for c in ALLOWED_LANGS}
         lang = max(ALLOWED_LANGS, key=lambda c: results[c][1])
-        transcript_text, _, uncertain = results[lang]
+        transcript_text, _, uncertain, words = results[lang]
         vlog(f"[IDIOMA] dudoso (es={shares['es']:.2f} en={shares['en']:.2f}) → logprob "
               f"es={results['es'][1]:.2f} en={results['en'][1]:.2f}, anterior={prev_lang} → {lang}")
 
     timings = {"start": t_start, "detect_s": t_detected - t_start, "proc_s": time.perf_counter() - t_start}
-    return transcript_text, lang, confident, uncertain, timings
+    return transcript_text, lang, confident, uncertain, words, timings
+
+# Al cortar por MAX_SEGMENT_S la persona sigue hablando, y Whisper "termina" la frase partida inventando:
+# "how the real translation system works" salió "how the real truth is." Por eso la última frase de un
+# segmento cortado por el límite no se muestra: su audio vuelve al búfer y se transcribe con lo que sigue.
+# Si esa frase ocupa más de HOLD_MAX_S (o no hay ningún final de frase), se retienen solo las palabras de
+# los últimos HOLD_TAIL_S. Necesita los tiempos por palabra (WORD_CONFIDENCE=1, el valor por defecto).
+HOLD_MAX_S  = 8.0
+HOLD_TAIL_S = 2.0
+
+def split_unfinished(words, audio_s: float):
+    """(palabras que se muestran ya, segundo desde el que se retiene el audio) o None si no hay que retener."""
+    if len(words) < 2:
+        return None
+    ends = [i for i, w in enumerate(words[:-1]) if w.word.strip().endswith((".", "?", "!", "…"))]
+    if ends and audio_s - words[ends[-1] + 1].start <= HOLD_MAX_S:
+        keep = ends[-1] + 1
+    else:
+        keep = next((i for i, w in enumerate(words) if w.start >= audio_s - HOLD_TAIL_S), len(words))
+    if keep == 0 or keep >= len(words):
+        return None
+    return words[:keep], max(0.0, words[keep].start - 0.1)
 
 SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 # Cifras con sus separadores, incluido el guion de los teléfonos (1-431-1000) y rangos (5-10).
@@ -840,7 +924,7 @@ def looks_broken(out: str, source: str) -> bool:
     return (not out or NON_LATIN.search(out) is not None or RUNAWAY.search(out) is not None
             or len(out) > 2.5 * len(source) + 20)
 
-def run_mt(sentences: list[str], tgt: str, tok, **options) -> list[str]:
+def run_mt(sentences: list[str], tgt: str, tok, beam: int = MT_BEAM, **options) -> list[str]:
     if IS_M2M:
         source = [tok.convert_ids_to_tokens(tok.encode(s)) for s in sentences]
         prefix, skip = [[f"__{tgt}__"]] * len(sentences), 1  # la salida empieza por el token del idioma
@@ -849,7 +933,7 @@ def run_mt(sentences: list[str], tgt: str, tok, **options) -> list[str]:
         prefix, skip = None, 0
     # Tope proporcional a la frase: una salida que se desboca se corta pronto en vez de llenar la burbuja.
     limit = min(256, 2 * max(len(s) for s in source) + 16)
-    results = mt_model.translate_batch(source, target_prefix=prefix, beam_size=4, max_decoding_length=limit, **options)
+    results = mt_model.translate_batch(source, target_prefix=prefix, beam_size=beam, max_decoding_length=limit, **options)
     return [tok.decode(tok.convert_tokens_to_ids(r.hypotheses[0][skip:]), skip_special_tokens=True).strip()
             for r in results]
 
@@ -885,14 +969,18 @@ def translate_sync(text: str, src: str):
         masked = [mask_numbers(sentences[i]) for i in todo]
         first = run_mt([m for m, _ in masked], tgt, tok)
         for i, (_, numbers), o in zip(todo, masked, first):
-            o = unmask_numbers(o, numbers)
-            out[i] = None if o is None or looks_broken(o, sentences[i]) else o
+            unmasked = unmask_numbers(o, numbers)
+            out[i] = None if unmasked is None or looks_broken(unmasked, sentences[i]) else unmasked
+            if out[i] is None:
+                vlog(f"   ⚠️ [TRADUCCIÓN] descartada: {sentences[i]!r} → {o[:160]!r}")
 
-    # Lo que salió mal se reintenta sin marcas y castigando repeticiones. Si tampoco sirve, el intérprete ve la
-    # frase original con ⚠: mejor sin traducir que con una cifra inventada.
+    # Lo que salió mal se reintenta sin marcas, con beam 4 y prohibiendo repetir 4 palabras seguidas (corta los
+    # bucles). Antes se usaba repetition_penalty, que castiga cualquier palabra ya usada: una frase con dos "y"
+    # no podía repetir "and" y el modelo se inventó media frase ("sets the language of the speaker…").
+    # Si tampoco sirve, el intérprete ve la frase original con ⚠: mejor sin traducir que con una cifra inventada.
     retry = [i for i, o in enumerate(out) if o is None]
     if retry:
-        second = run_mt([sentences[i] for i in retry], tgt, tok, repetition_penalty=1.3)
+        second = run_mt([sentences[i] for i in retry], tgt, tok, beam=4, no_repeat_ngram_size=4)
         for i, o in zip(retry, second):
             ok = not looks_broken(o, sentences[i]) and number_digits(o) == number_digits(sentences[i])
             out[i] = o if ok else f"⚠ {sentences[i]}"
@@ -901,6 +989,19 @@ def translate_sync(text: str, src: str):
     result = " ".join(out)
     # Un 9.0 traducido como 8.0 es peor que no traducir: se avisa para que el intérprete lo compruebe.
     return result, tgt, number_digits(result) == number_digits(text), time.perf_counter() - t_start
+
+def warm_up():
+    """La primera pasada por cada modelo inicializa la GPU y tardaba ~1 s de más; mejor aquí que con el primer
+    usuario. El silencio con ruido suave obliga a Whisper a decodificar (con VAD no llegaría al modelo)."""
+    t = time.perf_counter()
+    noise = (np.random.default_rng(0).standard_normal(SAMPLE_RATE * 2) * 0.01).astype(np.float32)
+    model.detect_language(noise, vad_filter=False)
+    list(model.transcribe(noise, language="es", beam_size=BEAM_SIZE, vad_filter=False, word_timestamps=WORD_CONFIDENCE)[0])
+    if mt_model:
+        run_mt(["Buenos días, ¿cómo se siente hoy?"], "en", mt_tokenizers["es"])
+    print(f"Modelos calentados ({time.perf_counter() - t:.1f} s)")
+
+warm_up()
 
 async def accept_with_code(websocket: WebSocket) -> tuple[str, dict] | None:
     """Acepta el socket y valida el código; si no vale, avisa, cierra y devuelve None."""
@@ -958,6 +1059,10 @@ async def websocket_endpoint(websocket: WebSocket):
     pcm = bytearray()
     has_speech = False
     silence_s = 0.0
+    held_s = 0.0  # audio retenido de una frase sin terminar, ya contado en el uso del cliente
+    held_text = ""  # lo que Whisper entendió en ese audio, por si al repetirlo se lo salta
+    levels, levels_s = collections.deque(), 0.0  # (rms, duración) de lo recibido, para el umbral adaptativo
+    threshold = RMS_THRESHOLD
     prev_text = ""
     prev_lang = None
     recent = collections.deque(maxlen=MAX_REPEATS)
@@ -984,30 +1089,42 @@ async def websocket_endpoint(websocket: WebSocket):
             pcm.extend(data)
             dur = (len(data) // 2) / SAMPLE_RATE
             level = rms_int16(data)
-            if DEBUG_RMS:
-                print(f"rms={level:.4f}")
-
-            if level >= RMS_THRESHOLD:
-                has_speech = True
-                silence_s = 0.0
-            else:
-                silence_s += dur
-
+            if dur > 0:
+                levels.append((level, dur))
+                levels_s += dur
+                while levels_s > NOISE_WINDOW_S:
+                    levels_s -= levels.popleft()[1]
+                threshold = speech_threshold(levels, levels_s)
             if not has_speech:
                 keep = int(PREROLL_S * SAMPLE_RATE) * 2
                 if len(pcm) > keep:
                     del pcm[:len(pcm) - keep]
-                continue
+                # Un "Good morning" dicho flojo no llegaba al umbral de volumen y se tiraba como silencio: con
+                # algo de sonido, el VAD decide si ya es voz.
+                has_speech = level >= threshold or (
+                    level >= DIGITAL_SILENCE and await loop.run_in_executor(None, has_voice, bytes(pcm)))
+                if not has_speech:
+                    continue
 
             buf_s = len(pcm) / 2 / SAMPLE_RATE
-            pausa = silence_s >= SILENCE_CUT_S and buf_s >= MIN_SEGMENT_S
+            # Un trozo claramente fuerte es voz seguro: se ahorra el VAD.
+            if level >= 2 * threshold or buf_s < MIN_SEGMENT_S:
+                silence_s = 0.0
+            else:
+                tail = bytes(pcm[-int(VAD_TAIL_S * SAMPLE_RATE) * 2:])
+                silence_s = await loop.run_in_executor(None, trailing_silence, tail)
+            if DEBUG_RMS:
+                print(f"rms={level:.4f} umbral={threshold:.4f} silencio={silence_s:.2f}")
+            needed = END_OF_TURN_S if buf_s - silence_s < SHORT_SPEECH_S else SILENCE_CUT_S
+            pausa = silence_s >= needed and buf_s >= MIN_SEGMENT_S
             demasiado_largo = buf_s >= MAX_SEGMENT_S
             if not (pausa or demasiado_largo or manual):
                 continue
 
             usable = len(pcm) - (len(pcm) % 2)
             cut = quietest_cut(pcm) if (demasiado_largo and not pausa and not manual) else usable
-            audio = np.frombuffer(bytes(pcm[:cut]), dtype=np.int16).astype(np.float32) / 32768.0
+            seg_bytes = bytes(pcm[:cut])
+            audio = np.frombuffer(seg_bytes, dtype=np.int16).astype(np.float32) / 32768.0
             if cut < usable:
                 del pcm[:cut]
             else:
@@ -1015,6 +1132,12 @@ async def websocket_endpoint(websocket: WebSocket):
             # Si se cortó en mitad del habla, lo que queda sigue siendo voz y abre el siguiente segmento.
             has_speech = len(pcm) >= 2
             silence_s = 0.0
+
+            # Ruido que pasó el umbral de volumen pero no tiene voz: fuera sin gastar GPU (antes llegaba a
+            # Whisper y a veces salía un "Gracias.").
+            if not manual and not held_s and not await loop.run_in_executor(None, has_voice, seg_bytes):
+                vlog(f"[VAD] {len(seg_bytes) / 2 / SAMPLE_RATE:.1f} s sin voz, descartados")
+                continue
 
             # Eliminar o dejar vencer un código corta también la sesión que ya estaba abierta.
             info = cached_codes().get(code_hash)
@@ -1025,8 +1148,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 break
 
             motivo = "pausa" if pausa else "límite máx." if demasiado_largo else "manual"
-            client["audio_s"] += len(audio) / SAMPLE_RATE
-            vlog(f"[AUDIO] {len(audio)/SAMPLE_RATE:.1f} s ({motivo})")
+            client["audio_s"] += len(audio) / SAMPLE_RATE - held_s
+            seg_held_s, seg_held_text = held_s, held_text
+            held_s, held_text = 0.0, ""
+            vlog(f"[AUDIO] {len(audio)/SAMPLE_RATE:.1f} s ({motivo}, umbral {threshold:.3f})")
             # La app muestra una flecha ↑ mientras procesa y la cambia por lo que tardó la respuesta; si el
             # segmento se descarta, {"processing": false} la quita. Las apps viejas ignoran estos mensajes.
             await websocket.send_json({"processing": True})
@@ -1035,7 +1160,7 @@ async def websocket_endpoint(websocket: WebSocket):
             metrics.in_flight += 1
             concurrency = metrics.in_flight  # segmentos compitiendo por la GPU, incluido este
             try:
-                text, lang, confident, uncertain, timings = await loop.run_in_executor(
+                text, lang, confident, uncertain, words, timings = await loop.run_in_executor(
                     None, transcribe_sync, audio, prev_text, prev_lang
                 )
             except Exception as e:
@@ -1053,6 +1178,30 @@ async def websocket_endpoint(websocket: WebSocket):
                     save_segment(audio, client_id, text, lang, motivo)
                 except OSError as e:
                     print(f"[SAVE_SEGMENTS ERROR]: {e}")
+
+            # Si este segmento empieza con audio retenido y Whisper no puso ninguna palabra ahí, se lo saltó
+            # ("within a few seconds." desapareció así): se repone lo que entendió la primera vez.
+            skipped_held = seg_held_s >= 0.8 and not any(w.start < seg_held_s - 0.3 for w in words)
+
+            # El búfer solo crece con lo que llega por el socket, y mientras se transcribía no se leyó nada:
+            # la frase retenida va delante de lo que quedó tras el corte, en su orden.
+            split = split_unfinished(words, len(audio) / SAMPLE_RATE) if (text and motivo == "límite máx.") else None
+            if split:
+                kept, hold_from = split
+                tail = seg_bytes[int(hold_from * SAMPLE_RATE) * 2:]
+                pcm[:0] = tail
+                has_speech = True
+                held_s = len(tail) / 2 / SAMPLE_RATE
+                held_text = "".join(w.word for w in words[len(kept):]).strip()
+                vlog(f"[CORTE] retenidos {held_s:.1f} s sin terminar: {held_text!r}")
+                text = collapse_repeats("".join(w.word for w in kept).strip())
+                uncertain = uncertain_tokens(text, kept)
+
+            if skipped_held:
+                vlog(f"[CORTE] Whisper se saltó lo retenido; se repone: {seg_held_text!r}")
+                shift = len(seg_held_text.split())
+                text = (seg_held_text + " " + text).strip()
+                uncertain = [i + shift for i in uncertain]
 
             if not text:
                 vlog("[WHISPER] Silencio/ruido filtrado.")
@@ -1075,6 +1224,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # La traducción va en el mismo mensaje, para que el original y su traducción aparezcan a la vez.
             # Si falla, se envía solo la transcripción y la app traduce por su cuenta.
+            # Se espera a la traducción antes de seguir con el audio: mandarla a segundo plano para adelantar el
+            # siguiente segmento solo metía más trabajos a la vez en una GPU ya llena (con 5 clientes, la última
+            # frase llegaba 1.5 s más tarde).
             reply = {
                 "transcript": text,
                 "language": lang,

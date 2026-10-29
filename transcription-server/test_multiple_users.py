@@ -8,7 +8,12 @@
 # el tiempo de estas pruebas cuenta como uso de esos códigos.
 # El WAV debe ser 16 kHz, mono, PCM de 16 bits, como el que manda la app (y el que guarda SAVE_SEGMENTS).
 
-import argparse, asyncio, json, math, statistics, time, wave
+"""
+crear codigos temporales: 
+for i in $(seq 1 10); do python server.py add-code prueba$i --days 1 --note "test de carga"; done
+"""
+
+import argparse, asyncio, collections, json, math, statistics, time, wave
 import websockets
 
 parser = argparse.ArgumentParser(description="Prueba de varios clientes contra el servidor de transcripción")
@@ -37,25 +42,26 @@ async def client(i, code, results):
         # El código va como subprotocolo, igual que en la app: new WebSocket(url, ['token', código])
         async with websockets.connect(args.url, max_size=None, subprotocols=["token", code]) as ws:
             t0 = time.perf_counter()
-            sent_at = None  # cuándo empezó el servidor con el segmento en curso ({"processing": true})
+            # Cuándo empezó el servidor con cada segmento en curso ({"processing": true}). Hoy hay uno a la vez,
+            # pero el servidor responde siempre en orden: con una cola, cada respuesta va con su propio inicio.
+            sent_at = collections.deque()
 
             async def reader():
-                nonlocal sent_at
                 try:
                     async for m in ws:
                         d = json.loads(m)
                         if d.get("error"):
                             r["error"] = d["error"]
                         elif d.get("processing") is True:
-                            sent_at = time.perf_counter()
+                            sent_at.append(time.perf_counter())
                         elif d.get("processing") is False:
-                            sent_at = None
+                            if sent_at:
+                                sent_at.popleft()
                         elif d.get("transcript"):
                             now = time.perf_counter()
-                            latency = now - sent_at if sent_at else None
+                            latency = now - sent_at.popleft() if sent_at else None
                             if latency is not None:
                                 r["latencies"].append(latency)
-                            sent_at = None
                             r["segments"] += 1
                             r["last"] = now - t0
                             tr = d.get("translation", "")
@@ -96,11 +102,16 @@ async def main():
         lat = r["latencies"]
         all_lat += lat
         tail = r["last"] - SPEECH_END
-        tails.append(tail)
         lat_txt = f"latencia media {statistics.mean(lat):.2f} s, máx {max(lat):.2f} s" if lat else "latencia ?"
         extra = (f" · ⚠ sin traducir: {r['warn']}" if r["warn"] else "") + \
                 (f" · cifras distintas: {r['numbers']}" if r["numbers"] else "")
-        print(f"cliente {i}: {r['segments']} segmentos · {lat_txt} · última frase +{tail:.1f} s{extra}")
+        # La última respuesta llegó antes de que acabara el audio: lo final no se transcribió (volumen, filtros…).
+        if tail < 0:
+            tail_txt = f"⚠ nada en los últimos {-tail:.1f} s del audio"
+        else:
+            tails.append(tail)
+            tail_txt = f"última frase +{tail:.1f} s"
+        print(f"cliente {i}: {r['segments']} segmentos · {lat_txt} · {tail_txt}{extra}")
     if all_lat:
         p95 = sorted(all_lat)[max(0, math.ceil(len(all_lat) * 0.95) - 1)]
         print(f"\nlatencia por segmento: media {statistics.mean(all_lat):.2f} s · p95 {p95:.2f} s · "

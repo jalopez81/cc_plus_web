@@ -475,8 +475,10 @@ const growObserver = new ResizeObserver((entries) => {
 
 // Server round trip per segment, under the bubble's time: ↑ while the server works on the audio it just cut,
 // then how long the reply took. The arrow sits on the latest bubble, since the language (and so the bubble the
-// reply lands in) is unknown until it arrives.
-let pending = null; // { since, block }
+// reply lands in) is unknown until it arrives. Today's server replies before starting the next segment, but
+// replies always come in order, so a queue keeps each reply (or drop) paired with its own start even if a
+// server ever has several in flight.
+const pending = []; // [{ since, block }]
 
 const formatLatency = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 
@@ -492,10 +494,11 @@ function showLatency(block, text, sending = false) {
 // bubble (in an interpreted call the other person usually speaks next); a reply in the other language
 // replaces it, and a dropped segment removes it (commitBlock discards bubbles without segments).
 function handleProcessing(started) {
-  if (pending) showLatency(pending.block, pending.block?.latency ?? '');
-  pending = null;
   if (!started) {
-    if (currentBlock?.segments.length === 0) commitBlock();
+    const dropped = pending.shift();
+    if (dropped) showLatency(dropped.block, dropped.block?.latency ?? '');
+    if (pending.length === 0 && currentBlock?.segments.length === 0) commitBlock();
+    else if (pending.length) showLatency(pending[0].block, '↑', true);
     return;
   }
   if (!currentBlock) {
@@ -504,16 +507,18 @@ function handleProcessing(started) {
     currentBlock = createBlock(lastLang ? targetFor(lastLang) : 'en');
     currentBlock.el.classList.add('waiting');
   }
-  pending = { since: performance.now(), block: currentBlock };
+  pending.push({ since: performance.now(), block: currentBlock });
   showLatency(currentBlock, '↑', true);
 }
 
 function settleLatency(block) {
-  if (!pending) return;
-  if (pending.block !== block) showLatency(pending.block, pending.block?.latency ?? '');
-  block.latency = formatLatency(performance.now() - pending.since);
+  const done = pending.shift();
+  if (!done) return;
+  if (done.block !== block) showLatency(done.block, done.block?.latency ?? '');
+  block.latency = formatLatency(performance.now() - done.since);
   showLatency(block, block.latency);
-  pending = null;
+  // Another segment still in flight keeps the arrow on the bubble it was started on.
+  if (pending.length) showLatency(pending[0].block, '↑', true);
 }
 
 function scrollToBottom() {
@@ -1044,6 +1049,7 @@ async function start() {
       setStatus(state, text);
       if (state === 'error') stop({ keepStatus: true });
     };
+    pending.length = 0; // segments left in flight by the last session never get a reply
     const transcription =
       settings.transcriptionEngine === 'deepgram'
         ? new DeepgramStream({

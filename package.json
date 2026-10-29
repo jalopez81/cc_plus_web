@@ -1,7 +1,7 @@
 {
   "name": "live-captioner",
   "productName": "Live Captioner",
-  "version": "1.5.18",
+  "version": "1.5.19",
   "description": "Transparent desktop overlay with real-time English/Spanish captions and translation of system audio.",
   "main": "src/main.js",
   "author": "Jorge Lopez",
