@@ -343,6 +343,41 @@ select option {
   text-shadow: none;
 }
 
+/* Server round trip under the time: ↑ while the segment is processed, then how long the reply took. */
+.cap .time-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.cap .latency {
+  font-size: 10px;
+  font-style: italic;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  color: var(--muted);
+  text-shadow: none;
+  white-space: nowrap;
+}
+
+.cap .latency:empty {
+  display: none;
+}
+
+.cap .latency.sending {
+  font-style: normal;
+  animation: latency-sending 0.9s ease-in-out infinite;
+}
+
+@keyframes latency-sending {
+  0%, 100% { opacity: 0.35; transform: translateY(1px); }
+  50% { opacity: 1; transform: translateY(-1px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cap .latency.sending { animation: none; }
+}
+
 .cap .src {
   grid-column: 1;
 }
@@ -3109,4 +3144,93 @@ body.ctrl-held .cap:hover::after {
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* Side by side: original on the left, translation on the right, the time column last. Only when both are
+   shown and there is a translation; otherwise the bubble keeps its stacked layout. */
+body.side-by-side:not(.hide-transcription):not(.hide-translation) .cap:has(.tr:not(:empty)) {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+body.side-by-side:not(.hide-transcription):not(.hide-translation) .cap:has(.tr:not(:empty)) .src {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+/* The original's first line holds the flag and EN/ES label, with its text starting one line (+2px) below;
+   the translation starts at that same height and shares the original's line height so the lines stay level. */
+body.side-by-side:not(.hide-transcription):not(.hide-translation) .cap:has(.tr:not(:empty)) .tr {
+  --src-line: calc(var(--font-size) * 0.62 * 1.5);
+  grid-column: 2;
+  grid-row: 1;
+  margin-top: calc(var(--src-line) + 2px);
+  line-height: var(--src-line);
+  padding-top: 0;
+  padding-left: 12px;
+  border-top: none;
+  border-left: 1px dashed #3d4b68;
+}
+
+body.side-by-side:not(.hide-transcription):not(.hide-translation) .cap:has(.tr:not(:empty)) .cap-meta {
+  grid-column: 3;
+}
+
+body.side-by-side .cap .paraphrase:not([hidden]),
+body.side-by-side .cap.active .split-row:not([hidden]) {
+  grid-column: 1 / -1;
+}
+
+/* Paraphrase condenses the translation, so it sits under the right-hand column, lined up with its text
+   (past the column's 1px divider and 12px padding). */
+body.side-by-side:not(.hide-transcription):not(.hide-translation) .cap:has(.tr:not(:empty)) .paraphrase:not([hidden]) {
+  grid-column: 2;
+  padding-left: 13px;
+}
+
+/* The paraphrase fades in while its bubble grows to make room (see growObserver in renderer.js). */
+.cap .summary {
+  transition: opacity 0.35s ease;
+}
+
+@starting-style {
+  .cap .summary {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cap .summary {
+    transition: none;
+  }
+}
+
+/* Waiting bubble: opened when the server starts on audio headed for a new bubble (see handleProcessing).
+   Its language is only a guess, so the flag and label stay hidden; animated dots stand in for the text. */
+.cap.waiting .flag,
+.cap.waiting .lang,
+body:not(.translator-off):not(.hide-translation) .cap.active.waiting .tr:empty,
+.cap.waiting .tr {
+  display: none;
+}
+
+.cap.active.waiting .src .text {
+  min-height: 0;
+}
+
+.cap.waiting .src .text::after {
+  content: '• • •';
+  color: var(--muted);
+  letter-spacing: 2px;
+  animation: waiting-dots 1.2s ease-in-out infinite;
+}
+
+@keyframes waiting-dots {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cap.waiting .src .text::after {
+    animation: none;
+  }
 }

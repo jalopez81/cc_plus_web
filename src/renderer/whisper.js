@@ -10,12 +10,13 @@ function float32ToInt16(samples) {
 }
 
 export class WhisperStream {
-  constructor({ url, accessCode, onTranscript, onStatus, onWelcome }) {
+  constructor({ url, accessCode, onTranscript, onStatus, onWelcome, onProcessing }) {
     this.url = url;
     this.accessCode = accessCode;
     this.onTranscript = onTranscript;
     this.onStatus = onStatus;
     this.onWelcome = onWelcome; // called with { name, usedS } once the server accepts the code
+    this.onProcessing = onProcessing; // true when the server starts on a segment, false if it drops it
     this.ws = null;
     this.audioContext = null;
     this.processor = null;
@@ -71,6 +72,10 @@ export class WhisperStream {
             name: data.name ? String(data.name) : '',
             usedS: Number.isFinite(data.used_s) ? data.used_s : null,
           });
+          return;
+        }
+        if (typeof data?.processing === 'boolean') {
+          this.onProcessing?.(data.processing);
           return;
         }
         if (data && typeof data.transcript === 'string') {

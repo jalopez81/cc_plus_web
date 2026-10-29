@@ -26,6 +26,7 @@ const settingsContent = $('settingsContent');
 const showTranscriptionToggle = $('showTranscriptionToggle');
 const showTranslationToggle = $('showTranslationToggle');
 const sentenceLinesToggle = $('sentenceLinesToggle');
+const sideBySideToggle = $('sideBySideToggle');
 
 document.body.classList.add(`platform-${window.captioner.platform}`);
 
@@ -45,6 +46,16 @@ function showWelcome(name, { toast = false } = {}) {
   el.textContent = name ? `Welcome ${name}!` : '';
   el.title = el.textContent; // the header may truncate it in a narrow window
   el.hidden = !name;
+  // Slides in from the right while fading in, on launch and again each time the server accepts the code.
+  if (name && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    el.animate(
+      [
+        { opacity: 0, transform: 'translateX(28px)' },
+        { opacity: 1, transform: 'none' },
+      ],
+      { duration: 550, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+    );
+  }
   try {
     if (name) localStorage.setItem(WELCOME_KEY, name);
     else localStorage.removeItem(WELCOME_KEY);
@@ -105,6 +116,7 @@ settings.accessCode ??= '';
 settings.showTranscription = settings.showTranscription ?? settings.showOriginal ?? true;
 settings.showTranslation = settings.showTranslation ?? true;
 settings.sentenceLines ??= true;
+settings.sideBySide ??= false;
 let session = null;
 let captureStarting = false;
 let currentBlock = null;
@@ -147,6 +159,7 @@ function applyAppearance() {
   document.body.classList.toggle('hide-translation', !settings.showTranslation);
   document.body.classList.toggle('translator-off', settings.translator === 'off');
   document.body.classList.toggle('paragraphs', !settings.sentenceLines);
+  document.body.classList.toggle('side-by-side', settings.sideBySide);
   bgColorInput.value = settings.bgColor;
   const translatorNames = {
     auto: 'Auto',
@@ -161,6 +174,7 @@ function applyAppearance() {
   showTranscriptionToggle.checked = settings.showTranscription;
   showTranslationToggle.checked = settings.showTranslation;
   sentenceLinesToggle.checked = settings.sentenceLines;
+  sideBySideToggle.checked = settings.sideBySide;
 }
 
 // ---------- hold timer ----------
@@ -392,7 +406,7 @@ function createBlock(lang) {
   el.className = 'cap interim active';
   el.dataset.lang = baseLang(lang);
   el.innerHTML =
-    '<div class="cap-meta"><span class="time"></span><button type="button" class="mark-btn" title="Marcar el último mensaje: los 15 minutos cuentan desde aquí">⏱</button></div><div class="src"><img class="flag" alt="" /><span class="lang"></span><span class="text"></span></div><div class="tr"></div>' +
+    '<div class="cap-meta"><span class="time-col"><span class="time"></span><span class="latency" title="Tiempo que tardó el servidor en devolver la transcripción y su traducción"></span></span><button type="button" class="mark-btn" title="Marcar el último mensaje: los 15 minutos cuentan desde aquí">⏱</button></div><div class="src"><img class="flag" alt="" /><span class="lang"></span><span class="text"></span></div><div class="tr"></div>' +
     '<div class="paraphrase" hidden><button type="button" class="paraphrase-btn" title="Condense this message with Gemini">Paraphrase</button><div class="summary" hidden></div></div>' +
     '<div class="split-row" hidden><button type="button" class="split-btn" title="Lo próximo que se diga empieza en una burbuja nueva">✂ Split here</button></div>';
   el.querySelector('.time').textContent = formatTime(new Date());
@@ -402,6 +416,7 @@ function createBlock(lang) {
   else flag.hidden = true;
   el.querySelector('.lang').textContent = SPEAKER_LABELS[baseLang(lang)] ?? baseLang(lang).toUpperCase();
   captionsEl.appendChild(el);
+  growObserver.observe(el);
   while (captionsEl.querySelectorAll('.cap').length > MAX_BLOCKS) {
     captionsEl.querySelector('.cap').remove();
   }
@@ -413,6 +428,93 @@ function createBlock(lang) {
 
 const formatTime = (date) =>
   date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+// Bubbles grow smoothly instead of jumping, whatever makes them taller (a new segment, its translation, the
+// paraphrase…). ResizeObserver runs after layout but before paint, so the jump is swapped for an animation from
+// the previous height before it is ever seen. Small steps pass through, so the active bubble's own min-height
+// transition isn't fought frame by frame; a change that lands mid-animation is animated once that one ends.
+const GROW_MIN_PX = 6;
+const bubbleHeights = new WeakMap();
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+
+const growObserver = new ResizeObserver((entries) => {
+  for (const { target: el } of entries) {
+    if (!el.isConnected) {
+      growObserver.unobserve(el);
+      continue;
+    }
+    if (el.dataset.growing) continue;
+    const from = bubbleHeights.get(el);
+    const to = el.offsetHeight;
+    bubbleHeights.set(el, to);
+    if (from === undefined || to - from < GROW_MIN_PX || reducedMotion.matches) continue;
+
+    el.dataset.growing = '1';
+    el.style.overflow = 'clip';
+    const anim = el.animate([{ height: `${from}px` }, { height: `${to}px` }], {
+      duration: 280,
+      easing: 'cubic-bezier(0.33, 1, 0.68, 1)',
+    });
+    // The newest bubble is kept in view as it grows; older ones (e.g. paraphrased later) don't pull the scroll.
+    const follow = el === captionsEl.lastElementChild;
+    const tick = () => {
+      if (!el.dataset.growing) return;
+      if (follow) scrollToBottom();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    const done = () => {
+      delete el.dataset.growing;
+      el.style.overflow = '';
+      if (follow) scrollToBottom();
+    };
+    anim.onfinish = done;
+    anim.oncancel = done;
+  }
+});
+
+// Server round trip per segment, under the bubble's time: ↑ while the server works on the audio it just cut,
+// then how long the reply took. The arrow sits on the latest bubble, since the language (and so the bubble the
+// reply lands in) is unknown until it arrives.
+let pending = null; // { since, block }
+
+const formatLatency = (ms) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+
+function showLatency(block, text, sending = false) {
+  const span = block?.el.querySelector('.latency');
+  if (!span) return;
+  span.textContent = text;
+  span.classList.toggle('sending', sending);
+}
+
+// With no live bubble, an empty "waiting" one opens as soon as the server starts on the audio, so the ↑ shows
+// work is under way. The language is unknown until the reply, so it guesses the other side from the last
+// bubble (in an interpreted call the other person usually speaks next); a reply in the other language
+// replaces it, and a dropped segment removes it (commitBlock discards bubbles without segments).
+function handleProcessing(started) {
+  if (pending) showLatency(pending.block, pending.block?.latency ?? '');
+  pending = null;
+  if (!started) {
+    if (currentBlock?.segments.length === 0) commitBlock();
+    return;
+  }
+  if (!currentBlock) {
+    const lastEl = [...captionsEl.querySelectorAll('.cap:not(.demo)')].at(-1);
+    const lastLang = lastEl && blocksByEl.get(lastEl)?.lang;
+    currentBlock = createBlock(lastLang ? targetFor(lastLang) : 'en');
+    currentBlock.el.classList.add('waiting');
+  }
+  pending = { since: performance.now(), block: currentBlock };
+  showLatency(currentBlock, '↑', true);
+}
+
+function settleLatency(block) {
+  if (!pending) return;
+  if (pending.block !== block) showLatency(pending.block, pending.block?.latency ?? '');
+  block.latency = formatLatency(performance.now() - pending.since);
+  showLatency(block, block.latency);
+  pending = null;
+}
 
 function scrollToBottom() {
   captionsEl.scrollTop = captionsEl.scrollHeight;
@@ -511,6 +613,7 @@ function renderBlock(block) {
 
   fillSentences(block.el.querySelector('.text'), srcItems);
   fillSentences(block.el.querySelector('.tr'), trItems);
+  block.el.classList.toggle('waiting', srcItems.length === 0);
   block.el.querySelector('.paraphrase').hidden = block.segments.length === 0;
   updateSplitButton(block);
   scrollToBottom();
@@ -676,7 +779,8 @@ const MIN_SWITCH_WORDS = 3;
 
 function resolveLang(language, transcript, confident = false) {
   const detected = language ? baseLang(language) : null;
-  if (!currentBlock) return detected ?? 'en';
+  // An empty waiting bubble only guessed its language, so it doesn't hold short replies to it.
+  if (!currentBlock || currentBlock.el.classList.contains('waiting')) return detected ?? currentBlock?.lang ?? 'en';
   if (!detected || detected === currentBlock.lang) return currentBlock.lang;
   if (confident) return detected;
   return transcript.split(/\s+/).length < MIN_SWITCH_WORDS ? currentBlock.lang : detected;
@@ -736,11 +840,14 @@ async function translateSegment(block, seg) {
   logSegment(block, seg);
 }
 
-function handleTranscript({ text, language, confident, uncertain, translation }) {
+function handleTranscript({ text, language, confident, uncertain, translation, translation_language }) {
   const transcript = String(text ?? '').trim();
-  const translated = typeof translation === 'string' ? translation.trim() : '';
   if (!transcript) return;
   const lang = resolveLang(language, transcript, confident);
+  // The server translates from its own language guess; if resolveLang kept the segment in the other block,
+  // that translation points the wrong way, so it is dropped.
+  const serverTarget = translation_language ? baseLang(translation_language) : targetFor(lang);
+  const translated = typeof translation === 'string' && serverTarget === targetFor(lang) ? translation.trim() : '';
 
   if (text) resetHoldTimer();
   if (currentBlock && currentBlock.lang !== lang) {
@@ -756,6 +863,7 @@ function handleTranscript({ text, language, confident, uncertain, translation })
   };
   currentBlock.segments.push(seg);
   renderBlock(currentBlock);
+  settleLatency(currentBlock);
   if (seg.tr === undefined) void translateSegment(currentBlock, seg);
   else logSegment(currentBlock, seg);
 }
@@ -950,6 +1058,7 @@ async function start() {
             onTranscript: handleTranscript,
             onStatus,
             onWelcome: onAccepted,
+            onProcessing: handleProcessing,
           });
 
     transcription.setMuted(muted);
@@ -989,6 +1098,7 @@ function stop({ keepStatus = false } = {}) {
   systemMeter = null;
   stopHoldTimer();
   stopUsage();
+  handleProcessing(false);
   commitBlock();
   logSession('ended');
   renderToggle();
@@ -1303,6 +1413,7 @@ async function saveVisibilitySettings() {
       showTranscription: showTranscriptionToggle.checked,
       showTranslation: showTranslationToggle.checked,
       sentenceLines: sentenceLinesToggle.checked,
+      sideBySide: sideBySideToggle.checked,
     });
     applyAppearance();
   } catch (err) {
@@ -1313,6 +1424,7 @@ async function saveVisibilitySettings() {
 showTranscriptionToggle.addEventListener('change', saveVisibilitySettings);
 showTranslationToggle.addEventListener('change', saveVisibilitySettings);
 sentenceLinesToggle.addEventListener('change', saveVisibilitySettings);
+sideBySideToggle.addEventListener('change', saveVisibilitySettings);
 
 function previewBackground() {
   settings = { ...settings, bgColor: bgColorInput.value };
@@ -1411,6 +1523,7 @@ const MENU_ACTIONS = {
   'toggle-transcription': () => toggleVisibility(showTranscriptionToggle),
   'toggle-translation': () => toggleVisibility(showTranslationToggle),
   'toggle-sentence-lines': () => toggleVisibility(sentenceLinesToggle),
+  'toggle-side-by-side': () => toggleVisibility(sideBySideToggle),
   'font-up': () => changeFontSize(2),
   'font-down': () => changeFontSize(-2),
 };

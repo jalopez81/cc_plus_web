@@ -133,8 +133,15 @@ async function runProvider(id, text, from, to, settings) {
   }
 }
 
+// Off while the transcription server's GPU translator is being proven: patient speech must not reach third-party
+// services. Segments the server leaves untranslated stay untranslated. Providers get removed once that holds up.
+const EXTERNAL_PROVIDERS_ENABLED = false;
+
 async function translate(text, from, to, settings) {
   if (!text.trim() || from === to || settings.translator === 'off') return { text: '' };
+  if (!EXTERNAL_PROVIDERS_ENABLED) {
+    return { text: '', error: 'only the transcription server translates (external services are off)' };
+  }
 
   if (settings.translator !== 'auto') {
     const id = PROVIDERS[settings.translator] ? settings.translator : 'mymemory';

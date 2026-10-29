@@ -6,8 +6,19 @@
 #       Túnel con nombre: URL fija en tu dominio (recomendado para producción).
 #   bash start-vast.sh
 #       Quick tunnel: URL aleatoria *.trycloudflare.com que cambia en cada arranque (solo pruebas).
+#
+# Opciones:
+#   --verbose, -v   Muestra cada segmento (texto, traducción, tiempos) y las peticiones del panel admin.
+#                   Sin ella la consola solo enseña el arranque, conexiones y errores.
 set -e
 cd "$(dirname "$0")"
+
+for arg in "$@"; do
+  case "$arg" in
+    -v|--verbose) export VERBOSE=1 ;;
+    *) echo "Opción desconocida: $arg (usa --verbose)"; exit 1 ;;
+  esac
+done
 
 # /workspace sobrevive a Stop en Vast; start.sh guarda ahí la caché de modelos.
 mkdir -p /workspace/hf_cache

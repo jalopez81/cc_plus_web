@@ -1,5 +1,4 @@
 """
-export CLOUDFLARE_TUNNEL_TOKEN='eyJhIjoiZTY0M2FiZWMwZGVlZTk0MTdhOGRhZTc2YzY1N2IwMzYiLCJ0IjoiMTExNGI5ZDYtMTU4YS00YmY4LThlMjMtYmMxMjJhOWZjM2QxIiwicyI6IlpHVXhaVEE0TUdJdFpqRTFNUzAwWm1GaUxUbGhaV1F0WVRrNU5tVmhaalJsWkRRdyJ9'
 export PUBLIC_HOSTNAME=whisper.life-caption-plus.bid 
 export WHISPER_MODEL="large-v3-turbo" 
 bash start-vast.sh
@@ -16,6 +15,15 @@ CODES_FILE = os.path.join(BASE_DIR, "authorized_codes.json")
 ADMIN_TOKEN_FILE = os.path.join(BASE_DIR, "admin_token.txt")
 SESSIONS_FILE = os.path.join(BASE_DIR, "sessions.jsonl")  # una línea por sesión terminada
 METRICS_FILE  = os.path.join(BASE_DIR, "metrics.jsonl")   # una línea por minuto con el resumen de rendimiento
+
+# Por defecto la consola solo muestra el arranque, conexiones y errores. VERBOSE=1 (bash start-vast.sh --verbose)
+# añade cada segmento con su texto y traducción, y las peticiones HTTP como el sondeo del panel admin.
+# Callado, además, el texto de los pacientes no queda escrito en server.log.
+VERBOSE = os.environ.get("VERBOSE", "0") != "0"
+
+def vlog(*args):
+    if VERBOSE:
+        print(*args)
 
 def hash_code(code: str) -> str:
     return hashlib.sha256(code.strip().encode("utf-8")).hexdigest()
@@ -364,8 +372,19 @@ if 'metadata_errors="ignore"' in content:
         f.write(content.replace(', metadata_errors="ignore"', ""))
 
 from faster_whisper import WhisperModel
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(_app):
+    async def sample_metrics():
+        while True:
+            await asyncio.sleep(10)
+            metrics.sample()
+    task = asyncio.create_task(sample_metrics())
+    yield
+    task.cancel()
+
+app = FastAPI(lifespan=lifespan)
 # El panel admin.html se abre desde file:// u otro origen, y autentica con cabecera Bearer.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST", "PUT", "DELETE"],
                    allow_headers=["Authorization", "Content-Type"])
@@ -494,14 +513,6 @@ def admin_metrics(request: Request, hours: int = 24):
         "minutes": [m for m in metrics.minutes if m["ts"] >= since],
     }
 
-@app.on_event("startup")
-async def start_metrics_sampler():
-    async def loop():
-        while True:
-            await asyncio.sleep(10)
-            metrics.sample()
-    asyncio.create_task(loop())
-
 @app.get("/api/admin/stats")
 def admin_stats(request: Request):
     require_admin(request)
@@ -558,6 +569,58 @@ print(f"Ajustes de decodificación: beam_size={BEAM_SIZE}, prompt de estilo={'s�
 SAVE_SEGMENTS = os.environ.get("SAVE_SEGMENTS", "")
 if SAVE_SEGMENTS:
     print(f"⚠️  Guardando cada segmento de audio en {SAVE_SEGMENTS}")
+
+# ---- Traducción en el servidor (CTranslate2, el mismo motor que faster-whisper) ----
+# Cada transcripción sale ya traducida en el mismo mensaje, y lo que dicen los pacientes no pasa por servicios de
+# traducción de terceros. TRANSLATE=0 la apaga y la app vuelve a traducir por su cuenta.
+# Solo modelos con licencia que permite uso comercial (el servicio se alquila):
+#   google/madlad400-3b-mt (Apache 2.0, por defecto): la mejor calidad; ~3 GB de VRAM.
+#   facebook/m2m100_1.2B (MIT): más ligero y rápido, traduce algo peor.
+# NLLB-200 traduciría bien, pero su licencia (CC-BY-NC) prohíbe el uso comercial, así que se rechaza.
+# La primera vez el modelo se descarga y se convierte a CTranslate2 en MT_DIR: MADLAD baja ~12 GB antes de
+# convertirse a ~3 GB, así que la instancia necesita unos 40 GB de disco.
+TRANSLATE = os.environ.get("TRANSLATE", "1") != "0"
+MT_MODEL  = os.environ.get("MT_MODEL", "google/madlad400-3b-mt")
+MT_DIR    = os.environ.get("MT_DIR", "/workspace/mt-ct2" if os.path.isdir("/workspace") else os.path.join(BASE_DIR, "mt-ct2"))
+IS_M2M    = "m2m100" in MT_MODEL
+# MADLAD indica el idioma destino con una etiqueta al inicio del texto ("<2en> …"); M2M100 fija el de origen en el
+# tokenizador y abre la salida con el token del destino ("__en__").
+
+def load_translator():
+    import ctranslate2
+    from transformers import AutoTokenizer
+    if "nllb" in MT_MODEL.lower():
+        raise ValueError("NLLB no permite uso comercial; usa google/madlad400-3b-mt o facebook/m2m100_1.2B")
+    target = os.path.join(MT_DIR, MT_MODEL.split("/")[-1])
+    if not os.path.isfile(os.path.join(target, "model.bin")):
+        print(f"Convirtiendo {MT_MODEL} a CTranslate2 (solo la primera vez, puede tardar 10–20 min)...")
+        from ctranslate2.converters import TransformersConverter
+        # En float16 la conversión pide la mitad de RAM (MADLAD en float32 ocuparía ~12 GB).
+        TransformersConverter(MT_MODEL, load_as_float16=True, low_cpu_mem_usage=True).convert(
+            target, quantization="int8_float16", force=True)
+        AutoTokenizer.from_pretrained(MT_MODEL).save_pretrained(target)
+        # Los pesos originales ocupan varios GB y ya no hacen falta; el disco de Vast suele ser pequeño.
+        from huggingface_hub import scan_cache_dir
+        cache = scan_cache_dir()
+        for repo in cache.repos:
+            if repo.repo_id == MT_MODEL:
+                cache.delete_revisions(*[r.commit_hash for r in repo.revisions]).execute()
+    if IS_M2M:
+        # Un tokenizador por idioma de origen: src_lang es estado del tokenizador y los segmentos van en paralelo.
+        tokenizers = {lang: AutoTokenizer.from_pretrained(target, src_lang=lang) for lang in ("es", "en")}
+    else:
+        tok = AutoTokenizer.from_pretrained(target)
+        tokenizers = {"es": tok, "en": tok}
+    return ctranslate2.Translator(target, device="cuda", compute_type="int8_float16"), tokenizers
+
+mt_model, mt_tokenizers = None, {}
+if TRANSLATE:
+    try:
+        print(f"Cargando traductor '{MT_MODEL}'...")
+        mt_model, mt_tokenizers = load_translator()
+        print("¡Traductor cargado correctamente!")
+    except Exception as e:
+        print(f"!!! No se pudo cargar el traductor ({e}); la app traducirá por su cuenta.")
 
 # ---- Parámetros de segmentación y estilos ----
 # Segmentos de 1–2 s dejan a Whisper sin contexto y fallan mucho más en palabras sueltas, fármacos y cifras:
@@ -664,7 +727,7 @@ def keep_segment(audio, seg) -> bool:
     rms = float(np.sqrt(np.mean(piece * piece))) if len(piece) else 0.0
     keep = rms >= HALLU_QUIET_RMS and seg.no_speech_prob < HALLU_NO_SPEECH and seg.avg_logprob > HALLU_MIN_LOGPROB
     if not keep:
-        print(f"[FILTRO] descartado '{seg.text.strip()}' (rms={rms:.3f} no_speech={seg.no_speech_prob:.2f} "
+        vlog(f"[FILTRO] descartado '{seg.text.strip()}' (rms={rms:.3f} no_speech={seg.no_speech_prob:.2f} "
               f"logprob={seg.avg_logprob:.2f})")
     return keep
 
@@ -734,11 +797,87 @@ def transcribe_sync(audio, prev_text="", prev_lang=None):
         results = {c: run_transcribe(audio, c, prev_text, prev_lang) for c in ALLOWED_LANGS}
         lang = max(ALLOWED_LANGS, key=lambda c: results[c][1])
         transcript_text, _, uncertain = results[lang]
-        print(f"[IDIOMA] dudoso (es={shares['es']:.2f} en={shares['en']:.2f}) → logprob "
+        vlog(f"[IDIOMA] dudoso (es={shares['es']:.2f} en={shares['en']:.2f}) → logprob "
               f"es={results['es'][1]:.2f} en={results['en'][1]:.2f}, anterior={prev_lang} → {lang}")
 
     timings = {"start": t_start, "detect_s": t_detected - t_start, "proc_s": time.perf_counter() - t_start}
     return transcript_text, lang, confident, uncertain, timings
+
+SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+# Cifras con sus separadores, incluido el guion de los teléfonos (1-431-1000) y rangos (5-10).
+NUMBER = re.compile(r"\d+(?:[.,:/-]\d+)*")
+# Lo que un traductor puede devolver sin estar roto: alfabeto latino con acentos, puntuación y símbolos comunes.
+# Otra escritura (los "瀛ʘ" de una salida degenerada) o una letra repetida sin fin delatan que el modelo se perdió.
+NON_LATIN = re.compile(r"[^\u0000-ɏ -⁯€]")
+RUNAWAY   = re.compile(r"(.)\1{7,}")
+
+def number_digits(text: str) -> list[str]:
+    """Cifras sin separadores, para comparar "9.0" con "9,0" o "1,000" con "1.000"."""
+    return sorted(re.sub(r"\D", "", n) for n in NUMBER.findall(text))
+
+def mask_numbers(sentence: str) -> tuple[str, list[str]]:
+    """'mi teléfono es 801-431-1000' → ('mi teléfono es [1]', ['801-431-1000']). Los modelos de traducción se
+    inventan o repiten dígitos (un 7.7 salió como "2.2.1.1. 7.7", un teléfono como "2177777…"); con la cifra
+    tapada no pueden tocarla, y al final se devuelve tal cual."""
+    numbers = []
+    def hide(m):
+        numbers.append(m.group())
+        return f"[{len(numbers)}]"
+    return NUMBER.sub(hide, sentence), numbers
+
+def unmask_numbers(text: str, numbers: list[str]) -> str | None:
+    """Repone las cifras; None si el modelo perdió, duplicó o renumeró alguna marca."""
+    for i, n in enumerate(numbers, 1):
+        if text.count(f"[{i}]") != 1:
+            return None
+        text = text.replace(f"[{i}]", n)
+    return text
+
+def looks_broken(out: str, source: str) -> bool:
+    return (not out or NON_LATIN.search(out) is not None or RUNAWAY.search(out) is not None
+            or len(out) > 2.5 * len(source) + 20)
+
+def run_mt(sentences: list[str], tgt: str, tok, **options) -> list[str]:
+    if IS_M2M:
+        source = [tok.convert_ids_to_tokens(tok.encode(s)) for s in sentences]
+        prefix, skip = [[f"__{tgt}__"]] * len(sentences), 1  # la salida empieza por el token del idioma
+    else:
+        source = [tok.convert_ids_to_tokens(tok.encode(f"<2{tgt}> {s}")) for s in sentences]
+        prefix, skip = None, 0
+    # Tope proporcional a la frase: una salida que se desboca se corta pronto en vez de llenar la burbuja.
+    limit = min(256, 2 * max(len(s) for s in source) + 16)
+    results = mt_model.translate_batch(source, target_prefix=prefix, beam_size=4, max_decoding_length=limit, **options)
+    return [tok.decode(tok.convert_tokens_to_ids(r.hypotheses[0][skip:]), skip_special_tokens=True).strip()
+            for r in results]
+
+def translate_sync(text: str, src: str):
+    """Traduce es↔en frase a frase (estos modelos se entrenaron con frases sueltas), en un solo lote.
+    Devuelve (traducción, idioma destino, si las cifras coinciden, segundos)."""
+    t_start = time.perf_counter()
+    tgt = "en" if src == "es" else "es"
+    tok = mt_tokenizers[src]
+    sentences = [s for s in SENTENCE_END.split(text) if s.strip()]
+
+    masked = [mask_numbers(s) for s in sentences]
+    first = run_mt([m for m, _ in masked], tgt, tok)
+    out: list[str | None] = []
+    for s, (_, numbers), o in zip(sentences, masked, first):
+        o = unmask_numbers(o, numbers)
+        out.append(None if o is None or looks_broken(o, s) else o)
+
+    # Lo que salió mal se reintenta sin marcas y castigando repeticiones. Si tampoco sirve, el intérprete ve la
+    # frase original con ⚠: mejor sin traducir que con una cifra inventada.
+    retry = [i for i, o in enumerate(out) if o is None]
+    if retry:
+        second = run_mt([sentences[i] for i in retry], tgt, tok, repetition_penalty=1.3)
+        for i, o in zip(retry, second):
+            ok = not looks_broken(o, sentences[i]) and number_digits(o) == number_digits(sentences[i])
+            out[i] = o if ok else f"⚠ {sentences[i]}"
+            vlog(f"   ⚠️ [TRADUCCIÓN] reintento {'válido' if ok else 'fallido'}: {sentences[i]!r} → {o[:120]!r}")
+
+    result = " ".join(out)
+    # Un 9.0 traducido como 8.0 es peor que no traducir: se avisa para que el intérprete lo compruebe.
+    return result, tgt, number_digits(result) == number_digits(text), time.perf_counter() - t_start
 
 async def accept_with_code(websocket: WebSocket) -> tuple[str, dict] | None:
     """Acepta el socket y valida el código; si no vale, avisa, cierra y devuelve None."""
@@ -864,7 +1003,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
             motivo = "pausa" if pausa else "límite máx." if demasiado_largo else "manual"
             client["audio_s"] += len(audio) / SAMPLE_RATE
-            print(f"[AUDIO] {len(audio)/SAMPLE_RATE:.1f} s ({motivo})")
+            vlog(f"[AUDIO] {len(audio)/SAMPLE_RATE:.1f} s ({motivo})")
+            # La app muestra una flecha ↑ mientras procesa y la cambia por lo que tardó la respuesta; si el
+            # segmento se descarta, {"processing": false} la quita. Las apps viejas ignoran estos mensajes.
+            await websocket.send_json({"processing": True})
 
             t_ready = time.perf_counter()
             metrics.in_flight += 1
@@ -876,6 +1018,7 @@ async def websocket_endpoint(websocket: WebSocket):
             except Exception as e:
                 print(f"[WHISPER ERROR]: {e}")
                 metrics.bucket["errors"] += 1
+                await websocket.send_json({"processing": False})
                 continue
             finally:
                 metrics.in_flight -= 1
@@ -889,13 +1032,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     print(f"[SAVE_SEGMENTS ERROR]: {e}")
 
             if not text:
-                print("[WHISPER] Silencio/ruido filtrado.")
+                vlog("[WHISPER] Silencio/ruido filtrado.")
+                await websocket.send_json({"processing": False})
                 continue
 
             # La misma frase en segmentos seguidos (un "thank you" en bucle) también se corta tras dos veces.
             key = normalize_text(text)
             if len(recent) == MAX_REPEATS and all(r == key for r in recent):
-                print(f"[FILTRO] repetido, omitido: {text}")
+                vlog(f"[FILTRO] repetido, omitido: {text}")
+                await websocket.send_json({"processing": False})
                 continue
             recent.append(key)
 
@@ -903,15 +1048,27 @@ async def websocket_endpoint(websocket: WebSocket):
             prev_lang = lang
             client.update(segments=client["segments"] + 1, last_activity=time.time())
 
-            print(f"✅ [{client['name']}] [{lang.upper()}]: {text}")
+            vlog(f"✅ [{client['name']}] [{lang.upper()}]: {text}")
 
-            # Enviamos únicamente la transcripción limpia y el idioma detectado al cliente
-            await websocket.send_json({
+            # La traducción va en el mismo mensaje, para que el original y su traducción aparezcan a la vez.
+            # Si falla, se envía solo la transcripción y la app traduce por su cuenta.
+            reply = {
                 "transcript": text,
                 "language": lang,
                 "confident": confident,
                 "uncertain": uncertain,  # índices de palabras (text.split()) que Whisper no tiene claras
-            })
+            }
+            if mt_model:
+                try:
+                    translation, tr_lang, numbers_ok, tr_s = await loop.run_in_executor(None, translate_sync, text, lang)
+                    reply.update(translation=translation, translation_language=tr_lang,
+                                   translation_numbers_ok=numbers_ok)
+                    vlog(f"   ↳ [{tr_lang.upper()}] ({tr_s * 1000:.0f} ms): {translation}")
+                    if not numbers_ok:
+                        vlog(f"   ⚠️ [CIFRAS] no coinciden: {number_digits(text)} → {number_digits(translation)}")
+                except Exception as e:
+                    print(f"[TRADUCCIÓN ERROR]: {e}")
+            await websocket.send_json(reply)
 
     except WebSocketDisconnect:
         pass
@@ -942,4 +1099,4 @@ if __name__ == "__main__":
         print(f" * Códigos autorizados: {len(load_codes())}\n")
     else:
         print(" * ⚠️  No hay authorized_codes.json: nadie podrá conectarse. Súbelo por Jupyter o con push-codes.\n")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info", access_log=VERBOSE)
